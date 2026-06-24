@@ -1,0 +1,15 @@
+pandas
+openpyxl
+streamlit
+msoffcrypto-tool
+numpy
+python-dateutil
+six
+cryptography
+python-docx
+twilio
+google-auth-oauthlib
+google-api-python-client
+msal
+requests
+fpdf2
