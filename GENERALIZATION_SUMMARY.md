@@ -30,6 +30,7 @@ To sell to non-technical buyers, the app must be "Secure by Default."
 *   **Dockerization**: Provide a `Dockerfile` so the app runs in a sealed, pre-configured environment.
 *   **Setup Wizard**: Implement a first-run check in `app.py` that forces the creation of a Master Password and verifies SSL/TLS.
 *   **Environment Vaults**: Use platform-specific "Secret" managers to store Twilio and SMTP keys so the user never touches raw code.
+*   **PayPal Billing**: The app includes `processor/payments.py`. To activate, the owner just adds `PAYPAL_CLIENT_ID` to their environment variables. The price is pre-set to **$99.00 (Lifetime License)**.
 
 ## 5. Monetization Path for GMDS
 *   **Marketplace Listing**: Package as a "Universal Clinical Data Framework."

@@ -39,6 +39,7 @@ from mailer import (
     load_hospital_emails,
     export_df_to_excel
 )
+from payments import render_paypal_button
 
 # ──────────────────────────────────────────────
 # Page Configuration
@@ -109,6 +110,13 @@ st.sidebar.markdown("---")
 
 # SMTP Configuration
 st.sidebar.subheader("📧 SMTP Settings")
+# ... (existing SMTP inputs)
+# (I will place this after the SMTP section)
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("💳 License & Billing")
+paypal_id = os.getenv("PAYPAL_CLIENT_ID", "")
+render_paypal_button(paypal_id, amount="99.00", item_name="Clinical Data Sorter - Lifetime License")
 smtp_host = st.sidebar.text_input("SMTP Host", value="smtp.gmail.com")
 smtp_port = st.sidebar.number_input("SMTP Port", value=587, min_value=1, max_value=65535)
 smtp_user = st.sidebar.text_input("SMTP Username", value="")
