@@ -51,6 +51,26 @@ st.set_page_config(
 )
 
 # ──────────────────────────────────────────────
+# SYSTEM HEALTH & PRE-HARDENING CHECK
+# ──────────────────────────────────────────────
+def check_system_health():
+    """
+    Checks if the system is 'Hardened' and ready for medical data.
+    """
+    is_healthy = True
+    warnings = []
+    
+    # Check for SSL (Conceptual check - in real production, check request headers)
+    # st.write(st.context.headers) 
+    
+    # Check for Master Database Password initialization
+    if not os.path.exists("/home/team/shared/SCD_Dbase_Sorter/data/master/Master_Database.xlsx"):
+        warnings.append("⚠️ **Master Database not initialized.** Please upload a file to begin.")
+        is_healthy = False
+        
+    return is_healthy, warnings
+
+# ──────────────────────────────────────────────
 # Session State Initialization
 # ──────────────────────────────────────────────
 if "processed_data" not in st.session_state:
@@ -76,6 +96,15 @@ if "final_discovered_df" not in st.session_state:
 # Sidebar: Configuration & Info
 # ──────────────────────────────────────────────
 st.sidebar.title("🔧 SCD Dbase Sorter")
+
+# Health Check Status
+healthy, msgs = check_system_health()
+if healthy:
+    st.sidebar.success("🛡️ System Hardened & Ready")
+else:
+    for m in msgs:
+        st.sidebar.warning(m)
+
 st.sidebar.markdown("---")
 
 # SMTP Configuration

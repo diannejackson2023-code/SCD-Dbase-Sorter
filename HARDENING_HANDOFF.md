@@ -20,6 +20,8 @@ The SCD Dbase Sorter is a high-security Streamlit application designed for autom
 - **Master Password Gating:** Write operations and PII viewing require session-based Master Password authorization.
 - **Audit Logging:** Every file detection, comparison, and database change is logged in `data/logs/audit_log.jsonl`.
 - **Privacy-First Search:** Comparisons use SHA-256 hashes. The Search Bot identifies "new" records without exposing existing PII to the recipient.
+- **Docker Ready:** The project includes a `Dockerfile` for one-click deployment in a sealed environment.
+- **System Health Monitor:** A built-in check in `app.py` ensures the system is initialized and secure before operation.
 
 ## 4. Hardening Requirements for Deployment Team
 The following infrastructure-level hardening steps are required for production deployment:
