@@ -1,0 +1,27 @@
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Secrets
+.master.key
+*.key
+*.pem
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts (companion app)
+companion/dist/
+companion/build/
+companion/*.spec
+companion/staged_*
+companion/sanitized_*

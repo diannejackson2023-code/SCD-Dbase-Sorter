@@ -1,0 +1,12 @@
+{"timestamp": "2026-07-19T20:11:42.857344", "action": "SAVE_ALIAS", "user": "system", "details": {"master": "Hospital", "alias": "Hospitall"}}
+{"timestamp": "2026-07-19T20:11:42.857823", "action": "SAVE_ALIAS", "user": "system", "details": {"master": "Year", "alias": "Yr"}}
+{"timestamp": "2026-07-19T20:11:42.858169", "action": "SAVE_ALIAS", "user": "system", "details": {"master": "Patient_ID", "alias": "Pt Num"}}
+{"timestamp": "2026-07-19T20:11:42.860709", "action": "LOAD_AND_MAP", "user": "system", "details": {"file": "/home/team/shared/SCD_Dbase_Sorter/data/staging/test_token_123/test_discovery.xlsx", "records": 2}}
+{"timestamp": "2026-07-19T20:11:42.880207", "action": "UPDATE_MASTER", "user": "system", "details": {"records_added": 2}}
+{"timestamp": "2026-07-19T20:11:42.912649", "action": "GENERATE_HOSPITAL_SHEETS", "user": "system", "details": {"hospitals": ["City General", "Mercy Hospital", "St Jude"]}}
+{"timestamp": "2026-07-19T20:11:42.912989", "action": "ATOMIC_EXPORT", "user": "system", "details": {"file": "test_discovery.xlsx", "status": "SUCCESS", "new_records": 2}}
+{"timestamp": "2026-07-19T20:11:50.630399", "action": "SAVE_ALIAS", "user": "system", "details": {"master": "Hospital", "alias": "Hospitall"}}
+{"timestamp": "2026-07-19T20:11:50.631042", "action": "SAVE_ALIAS", "user": "system", "details": {"master": "Year", "alias": "Yr"}}
+{"timestamp": "2026-07-19T20:11:50.631357", "action": "SAVE_ALIAS", "user": "system", "details": {"master": "Patient_ID", "alias": "Pt Num"}}
+{"timestamp": "2026-07-19T20:11:50.633889", "action": "LOAD_AND_MAP", "user": "system", "details": {"file": "/home/team/shared/SCD_Dbase_Sorter/data/staging/test_token_123/test_discovery.xlsx", "records": 3}}
+{"timestamp": "2026-07-19T20:11:50.639425", "action": "DE_DUPLICATION", "user": "system", "details": {"file": "test_discovery.xlsx", "duplicates_removed": 3}}

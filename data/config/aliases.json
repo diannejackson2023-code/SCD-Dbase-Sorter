@@ -1,8 +1,40 @@
 {
-    "Hospital": ["Hosp_Name", "Hosp Name", "Facility", "Center", "Hospital Name"],
-    "Year": ["Yr", "Data_Year", "Period", "Year of Data"],
-    "Patient_ID": ["Pt_No", "Patient ID", "ID", "Case_No", "Patient_ID"],
-    "Patient_Name": ["Name", "Patient Name", "Full Name", "Pt Name"],
-    "Treatment": ["Rx", "Therapy", "Treatment"],
-    "Outcome": ["Result", "Status", "Outcome"]
+    "Hospital": [
+        "Hosp_Name",
+        "Hosp Name",
+        "Facility",
+        "Center",
+        "Hospital Name",
+        "Hospitall"
+    ],
+    "Year": [
+        "Yr",
+        "Data_Year",
+        "Period",
+        "Year of Data"
+    ],
+    "Patient_ID": [
+        "Pt_No",
+        "Patient ID",
+        "ID",
+        "Case_No",
+        "Patient_ID",
+        "Pt Num"
+    ],
+    "Patient_Name": [
+        "Name",
+        "Patient Name",
+        "Full Name",
+        "Pt Name"
+    ],
+    "Treatment": [
+        "Rx",
+        "Therapy",
+        "Treatment"
+    ],
+    "Outcome": [
+        "Result",
+        "Status",
+        "Outcome"
+    ]
 }

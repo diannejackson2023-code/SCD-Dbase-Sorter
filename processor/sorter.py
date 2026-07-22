@@ -1,12 +1,18 @@
 import pandas as pd
 import os
 import io
+import json
+import hashlib
 from datetime import datetime
 from encryption import encrypt_file, decrypt_file_to_memory
 from logger import audit_logger
+from hashing_service import get_master_patient_hashes, compare_hashes
+from mapping import load_and_map_data
 
 MASTER_DB_PATH = "/home/team/shared/SCD_Dbase_Sorter/data/master/Master_Database.xlsx"
 HOSPITALS_DIR = "/home/team/shared/SCD_Dbase_Sorter/data/hospitals/"
+STAGING_BASE_DIR = "/home/team/shared/SCD_Dbase_Sorter/data/staging"
+QUEUE_FILE = os.path.join(STAGING_BASE_DIR, "queue.json")
 
 def ensure_directories():
     """Ensures necessary directories exist."""
@@ -58,26 +64,6 @@ def generate_hospital_sheets(master_df):
     # Group by Hospital
     grouped = master_df.groupby('Hospital')
     
-    # Decrypt Master for modification
-    decrypted_master = decrypt_file_to_memory(MASTER_DB_PATH)
-    master_buffer = io.BytesIO(decrypted_master) if decrypted_master else None
-
-    # We'll use ExcelWriter to update the Master_Database with sheets
-    # If file doesn't exist or is empty, we create new
-    writer_kwargs = {'engine': 'openpyxl'}
-    if master_buffer:
-        writer_kwargs['mode'] = 'a'
-        writer_kwargs['if_sheet_exists'] = 'replace'
-        target = master_buffer
-    else:
-        target = MASTER_DB_PATH
-
-    with pd.ExcelWriter(MASTER_DB_PATH if not master_buffer else master_buffer, **writer_kwargs) as writer:
-        if master_buffer:
-             # This is a bit tricky with ExcelWriter in-memory. 
-             # Let's simplify: always overwrite the file since we have the full master_df anyway
-             pass
-    
     # Simplified approach: Overwrite everything since we have the full master_df
     with pd.ExcelWriter(MASTER_DB_PATH, engine='openpyxl') as writer:
         # Also write the full Master sheet
@@ -113,6 +99,103 @@ def generate_hospital_sheets(master_df):
     # Finally encrypt the Master Database
     encrypt_file(MASTER_DB_PATH)
     audit_logger.log_action("GENERATE_HOSPITAL_SHEETS", details={"hospitals": list(grouped.groups.keys())})
+
+def update_queue_status_local(token, filename, status, details=None):
+    """Local helper to update queue without full Flask dependency."""
+    if not os.path.exists(QUEUE_FILE):
+        return
+    try:
+        with open(QUEUE_FILE, 'r') as f:
+            queue = json.load(f)
+    except Exception:
+        return
+        
+    if token in queue:
+        for item in queue[token]:
+            if item.get('filename') == filename:
+                item['status'] = status
+                item['updated_at'] = datetime.now().isoformat()
+                if details:
+                    item['details'] = details
+                break
+        with open(QUEUE_FILE, 'w') as f:
+            json.dump(queue, f, indent=4)
+
+def atomic_merge_staging_files(token):
+    """
+    Milestone 4: Atomic Export
+    Merges all staged files for a token into the Master Database.
+    Deletes files from staging ONLY after successful merge.
+    """
+    if not os.path.exists(QUEUE_FILE):
+        return {"error": "Queue not found"}
+        
+    try:
+        with open(QUEUE_FILE, 'r') as f:
+            queue = json.load(f)
+    except Exception as e:
+        return {"error": f"Failed to read queue: {e}"}
+        
+    if token not in queue:
+        return {"error": "Token not found in queue"}
+        
+    staged_items = [item for item in queue[token] if item.get('status') == 'STAGED']
+    if not staged_items:
+        return {"message": "No staged files to merge"}
+        
+    results = []
+    master_hashes = get_master_patient_hashes()
+    
+    for item in staged_items:
+        filename = item['filename']
+        file_path = os.path.join(STAGING_BASE_DIR, token, filename)
+        
+        if not os.path.exists(file_path):
+            update_queue_status_local(token, filename, "ERROR", "File missing on disk")
+            continue
+            
+        try:
+            # 1. Load, Map, and Heal (Heal logic is inside load_and_map_data)
+            df = load_and_map_data(file_path)
+            
+            # Check for macros (extension-based check for logging)
+            if filename.lower().endswith(('.xlsm', '.xlsb', '.docm')):
+                audit_logger.log_action("SANITIZATION_MACRO", details={"file_source": filename, "msg": "Stripped VBA macros"})
+            
+            # 2. De-duplication
+            if not df.empty and "Patient_ID" in df.columns:
+                initial_count = len(df)
+                # Filter out rows that are already in master
+                is_duplicate = df["Patient_ID"].apply(lambda pid: hashlib.sha256(str(pid).strip().encode()).hexdigest() in master_hashes if pd.notna(pid) else False)
+                df = df[~is_duplicate]
+                removed_count = initial_count - len(df)
+                if removed_count > 0:
+                    audit_logger.log_action("DE_DUPLICATION", details={"file": filename, "duplicates_removed": removed_count})
+            
+            if not df.empty:
+                # 3. Merge into Master DB
+                process_new_data(df)
+                
+                # 4. Verify and Clean up
+                # If we reached here without exception, assume success
+                os.remove(file_path)
+                update_queue_status_local(token, filename, "MERGED", f"Merged {len(df)} new records")
+                audit_logger.log_action("ATOMIC_EXPORT", details={"file": filename, "status": "SUCCESS", "new_records": len(df)})
+                results.append({"filename": filename, "status": "SUCCESS", "records": len(df)})
+                
+                # Refresh master hashes for next file in loop
+                master_hashes = get_master_patient_hashes()
+            else:
+                os.remove(file_path)
+                update_queue_status_local(token, filename, "MERGED", "No new records found (all duplicates)")
+                results.append({"filename": filename, "status": "SKIPPED", "msg": "All duplicates"})
+                
+        except Exception as e:
+            update_queue_status_local(token, filename, "FAILED", str(e))
+            audit_logger.log_action("ATOMIC_EXPORT", details={"file": filename, "status": "FAILED", "error": str(e)})
+            results.append({"filename": filename, "status": "FAILED", "error": str(e)})
+            
+    return {"results": results}
 
 def process_new_data(new_data_df):
     """

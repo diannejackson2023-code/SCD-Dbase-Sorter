@@ -26,7 +26,7 @@ from mapping import (
     load_aliases,
     save_new_alias
 )
-from sorter import process_new_data, MASTER_DB_PATH, HOSPITALS_DIR
+from sorter import process_new_data, MASTER_DB_PATH, HOSPITALS_DIR, atomic_merge_staging_files
 from encryption import decrypt_file_to_memory
 from logger import audit_logger
 from mailer import (
@@ -40,6 +40,7 @@ from mailer import (
     export_df_to_excel
 )
 from payments import render_paypal_button
+from discovery_api import lead_initiate_request, get_final_discovered_df, get_staging_queue
 
 # ──────────────────────────────────────────────
 # Page Configuration
@@ -1244,6 +1245,126 @@ else:
                 st.error(f"Error reading log: {e}")
         else:
             st.info("Log file not found.")
+
+    # ====== Visual Sync Box ======
+    st.markdown("---")
+    st.subheader("🔄 Visual Sync Box — Live Export Queue")
+    st.caption("Monitors files staged for merging into the Master Database.")
+    
+    # Real Queue Loading
+    def load_real_queue():
+        all_reqs = _load_requests()
+        all_staged = []
+        for token, req in all_reqs.items():
+            staged = get_staging_queue(token)
+            for item in staged:
+                if item.get("status") == "STAGED":
+                    item["token"] = token
+                    item["recipient"] = req.get("recipient_email", "Unknown")
+                    # Map shield based on some properties if available, else default to green
+                    item["shield"] = "🟢" if "error" not in item else "🔴"
+                    all_staged.append(item)
+        return all_staged
+
+    if "sync_box_exporting" not in st.session_state:
+        st.session_state.sync_box_exporting = False
+    
+    staged_files = load_real_queue()
+    
+    # Box container
+    box = st.container()
+    with box:
+        if not st.session_state.sync_box_exporting:
+            if not staged_files:
+                st.info("📭 No files currently in the live export queue.")
+            else:
+                # Full queue display
+                total_records = sum(int(f.get("records", 0)) for f in staged_files)
+                healthy = sum(1 for f in staged_files if f.get("shield") == "🟢")
+                blocked = sum(1 for f in staged_files if f.get("shield") == "🔴")
+                
+                col_b1, col_b2, col_b3, col_b4 = st.columns(4)
+                with col_b1: st.metric("📦 Files", len(staged_files))
+                with col_b2: st.metric("📊 Records", total_records)
+                with col_b3: st.metric("🟢 Healthy", healthy)
+                with col_b4: st.metric("🔴 Blocked", blocked)
+                
+                # File cards with shield icons
+                for f in staged_files:
+                    cols = st.columns([1, 3, 1, 1, 2])
+                    with cols[0]: st.markdown(f"**{f['shield']}**")
+                    with cols[1]: st.markdown(f"**{f['filename']}**\n\n*(From: {f['recipient']})*")
+                    with cols[2]: st.markdown(f"_{f.get('records', '?')}_ recs")
+                    with cols[3]: st.markdown(f"_{f.get('size', '?')}_")
+                    with cols[4]:
+                        status = f.get("status", "STAGED")
+                        if status == "STAGED":
+                            st.markdown("🟢 Ready")
+                        else:
+                            st.markdown(f"⚪ {status}")
+                    st.divider()
+                
+                # Export button
+                export_disabled = not st.session_state.discovery_authorized
+                if st.button("🚀 Start Atomic Export to Database", type="primary", use_container_width=True, disabled=export_disabled):
+                    if not st.session_state.discovery_authorized:
+                        st.warning("🔐 Please authorize via the Master Database Password above.")
+                    else:
+                        st.session_state.sync_box_exporting = True
+                        st.rerun()
+        
+        else:
+            # Atomic Export Execution
+            progress_bar = st.progress(0, text="Initializing atomic export...")
+            status_placeholder = st.empty()
+            
+            total = len(staged_files)
+            tokens_to_process = list(set(f["token"] for f in staged_files))
+            
+            done_count = 0
+            for token in tokens_to_process:
+                token_files = [f for f in staged_files if f["token"] == token]
+                for f in token_files:
+                    status_placeholder.info(f"📤 Exporting **{f['filename']}** from {f['recipient']}...")
+                    
+                    # Call the REAL atomic merge function
+                    # It processes ALL staged files for this token
+                    # But we can call it once per token or once for all.
+                    # Given the function signature, it processes all for the token.
+                    pass
+                
+                # Trigger real merge for this token
+                merge_result = atomic_merge_staging_files(token)
+                
+                for res in merge_result.get("results", []):
+                    done_count += 1
+                    progress_val = int((done_count) / total * 100)
+                    progress_bar.progress(progress_val, text=f"Processed {done_count}/{total} files...")
+                    
+                    if res["status"] == "SUCCESS":
+                        st.success(f"✅ **Merged:** {res['filename']} ({res.get('records', 0)} new records)")
+                    elif res["status"] == "SKIPPED":
+                        st.info(f"⏭️ **Skipped:** {res['filename']} (All duplicates)")
+                    else:
+                        st.error(f"❌ **Failed:** {res['filename']} - {res.get('error')}")
+                
+                import time
+                time.sleep(0.5) # Small pause for visual feedback
+            
+            progress_bar.progress(100, text="Atomic export complete!")
+            st.balloons()
+            st.session_state.sync_box_exporting = False
+            
+            # Refresh master DF in session state
+            try:
+                decrypted_master = decrypt_file_to_memory(MASTER_DB_PATH)
+                if decrypted_master:
+                    st.session_state.master_df = pd.read_excel(io.BytesIO(decrypted_master))
+            except:
+                pass
+                
+            if st.button("✅ Finish & Clear Box", use_container_width=True):
+                st.rerun()
     
     st.markdown("---")
     

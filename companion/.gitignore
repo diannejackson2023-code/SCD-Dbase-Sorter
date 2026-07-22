@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+staged_*
+sanitized_*
+dist/
+build/
+*.spec

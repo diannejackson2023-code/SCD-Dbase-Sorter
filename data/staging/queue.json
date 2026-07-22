@@ -1,0 +1,10 @@
+{
+    "test_token_123": [
+        {
+            "filename": "test_discovery.xlsx",
+            "status": "MERGED",
+            "updated_at": "2026-07-19T20:11:50.639599",
+            "details": "No new records found (all duplicates)"
+        }
+    ]
+}

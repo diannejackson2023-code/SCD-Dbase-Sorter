@@ -1,6 +1,8 @@
 import os
 import io
 import sys
+import json
+import datetime
 import pandas as pd
 
 # Handle both relative and absolute imports for compatibility
@@ -89,6 +91,22 @@ def _send_invitation_worker(token, email, link):
     else:
         update_discovery_status(token, "INVITATION_FAILED")
         audit_logger.log_action("DISCOVERY_INVITATION_FAILED_BULK", details={"email": email, "token": token})
+
+def get_staging_queue(token):
+    """
+    Retrieves the current staging queue status for a given token.
+    Allows real-time UI polling of files coming from the Companion App.
+    """
+    staging_dir = "/home/team/shared/SCD_Dbase_Sorter/data/staging"
+    queue_file = os.path.join(staging_dir, "queue.json")
+    if os.path.exists(queue_file):
+        try:
+            with open(queue_file, 'r') as f:
+                queue = json.load(f)
+                return queue.get(token, [])
+        except:
+            return []
+    return []
 
 def recipient_get_context(token):
     """
