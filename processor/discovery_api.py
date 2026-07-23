@@ -37,9 +37,9 @@ def lead_initiate_request(recipient_email, recipient_phone):
     """
     token = initiate_discovery(recipient_email, recipient_phone)
     
-    # Base URL should ideally be from a config or environment variable
-    # For now we use localhost as per existing convention
-    discovery_link = f"http://localhost:3000/?token={token}"
+    # Base URL should be from a config or environment variable for permanent hosting
+    base_url = os.environ.get("BASE_URL", "http://localhost:3000")
+    discovery_link = f"{base_url.rstrip('/')}/?token={token}"
     
     # Send invitation email
     success = send_discovery_invitation(recipient_email, discovery_link)
@@ -60,6 +60,8 @@ def lead_bulk_initiate_request(recipients):
     Returns a list of dicts with email, token, link
     """
     results = []
+    base_url = os.environ.get("BASE_URL", "http://localhost:3000")
+    
     # Maximum 10 concurrent email sends to avoid overwhelming the SMTP server or hitting limits
     with ThreadPoolExecutor(max_workers=10) as executor:
         for rec in recipients:
@@ -69,7 +71,7 @@ def lead_bulk_initiate_request(recipients):
                 continue
                 
             token = initiate_discovery(email, phone)
-            discovery_link = f"http://localhost:3000/?token={token}"
+            discovery_link = f"{base_url.rstrip('/')}/?token={token}"
             
             # Queue the invitation email
             executor.submit(_send_invitation_worker, token, email, discovery_link)
