@@ -46,21 +46,27 @@ from discovery_api import lead_initiate_request, get_final_discovered_df, get_st
 # --- Start Staging API in Background ---
 import threading
 try:
-    from processor.staging_api import app as staging_app
+    try:
+        from staging_api import app as staging_app
+    except ImportError:
+        from processor.staging_api import app as staging_app
+        
     def run_staging_api():
         # Use a different port than Streamlit (Streamlit usually 8501)
         # Port 5000 is default for the Companion App
-        staging_app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+        try:
+            staging_app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+        except Exception as e:
+            print(f"Staging API background error: {e}")
 
     # Check if already running to avoid port conflicts during reruns
-    # In Streamlit, this block runs on every interaction unless protected
     if "staging_api_started" not in st.session_state:
         api_thread = threading.Thread(target=run_staging_api, daemon=True)
         api_thread.start()
         st.session_state.staging_api_started = True
         audit_logger.log_action("STAGING_API_STARTED_BACKGROUND", details={"port": 5000})
-except ImportError:
-    st.error("Could not load Staging API. Companion App features may be disabled.")
+except (ImportError, Exception) as e:
+    st.error(f"Could not load Staging API: {e}. Companion App features may be disabled.")
 # --------------------------------------
 
 # ──────────────────────────────────────────────
