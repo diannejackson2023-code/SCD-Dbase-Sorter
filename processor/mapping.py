@@ -41,7 +41,10 @@ def infer_heading_from_data(data_sample):
             return master
     return None
 
-ALIAS_FILE = "/home/team/shared/SCD_Dbase_Sorter/data/config/aliases.json"
+try:
+    from .config import ALIASES_PATH as ALIAS_FILE, HOSPITAL_EMAILS_PATH as CONFIG_PATH
+except ImportError:
+    from config import ALIASES_PATH as ALIAS_FILE, HOSPITAL_EMAILS_PATH as CONFIG_PATH
 
 def load_aliases():
     """Loads aliases from the JSON file."""
@@ -248,8 +251,6 @@ def get_column_mapping(file_input, password=None):
          best_row_idx = 1
          
     return best_mapping, best_row_idx
-
-CONFIG_PATH = "/home/team/shared/SCD_Dbase_Sorter/data/config/hospital_emails.csv"
 
 def load_hospital_config():
     """Loads hospital email and validator mapping."""

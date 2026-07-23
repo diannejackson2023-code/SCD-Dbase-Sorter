@@ -13,8 +13,10 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     return response
 
-STAGING_BASE_DIR = "/home/team/shared/SCD_Dbase_Sorter/data/staging"
-QUEUE_FILE = os.path.join(STAGING_BASE_DIR, "queue.json")
+try:
+    from .config import STAGING_DIR as STAGING_BASE_DIR, QUEUE_FILE
+except ImportError:
+    from config import STAGING_DIR as STAGING_BASE_DIR, QUEUE_FILE
 
 def update_queue_status(token, filename, status, details=None):
     os.makedirs(STAGING_BASE_DIR, exist_ok=True)

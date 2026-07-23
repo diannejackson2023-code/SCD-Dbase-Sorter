@@ -4,7 +4,10 @@ import io
 import os
 from encryption import decrypt_file_to_memory
 
-MASTER_DB_PATH = "/home/team/shared/SCD_Dbase_Sorter/data/master/Master_Database.xlsx"
+try:
+    from .config import MASTER_DB_PATH
+except ImportError:
+    from config import MASTER_DB_PATH
 
 def generate_hash(value):
     """Generates a SHA-256 hash for a given value."""

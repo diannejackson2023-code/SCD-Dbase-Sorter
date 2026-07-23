@@ -26,7 +26,8 @@ from mapping import (
     load_aliases,
     save_new_alias
 )
-from sorter import process_new_data, MASTER_DB_PATH, HOSPITALS_DIR, atomic_merge_staging_files
+from sorter import process_new_data, atomic_merge_staging_files
+from config import MASTER_DB_PATH, HOSPITALS_DIR, AUDIT_LOG_PATH, MASTER_KEY_PATH, QUEUE_FILE, BASE_DIR
 from encryption import decrypt_file_to_memory
 from logger import audit_logger
 from mailer import (
@@ -41,6 +42,26 @@ from mailer import (
 )
 from payments import render_paypal_button
 from discovery_api import lead_initiate_request, get_final_discovered_df, get_staging_queue
+
+# --- Start Staging API in Background ---
+import threading
+try:
+    from processor.staging_api import app as staging_app
+    def run_staging_api():
+        # Use a different port than Streamlit (Streamlit usually 8501)
+        # Port 5000 is default for the Companion App
+        staging_app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+
+    # Check if already running to avoid port conflicts during reruns
+    # In Streamlit, this block runs on every interaction unless protected
+    if "staging_api_started" not in st.session_state:
+        api_thread = threading.Thread(target=run_staging_api, daemon=True)
+        api_thread.start()
+        st.session_state.staging_api_started = True
+        audit_logger.log_action("STAGING_API_STARTED_BACKGROUND", details={"port": 5000})
+except ImportError:
+    st.error("Could not load Staging API. Companion App features may be disabled.")
+# --------------------------------------
 
 # ──────────────────────────────────────────────
 # Page Configuration
@@ -66,7 +87,7 @@ def check_system_health():
     # st.write(st.context.headers) 
     
     # Check for Master Database Password initialization
-    if not os.path.exists("/home/team/shared/SCD_Dbase_Sorter/data/master/Master_Database.xlsx"):
+    if not os.path.exists(MASTER_DB_PATH):
         warnings.append("⚠️ **Master Database not initialized.** Please upload a file to begin.")
         is_healthy = False
         
@@ -181,14 +202,14 @@ if admin_mode:
         st.sidebar.subheader("🛡️ Security Health Check")
         
         # 1. Key File Check
-        key_path = "/home/team/shared/SCD_Dbase_Sorter/data/config/.master.key"
+        key_path = MASTER_KEY_PATH
         if os.path.exists(key_path):
             st.sidebar.success("✅ Master Key: Found")
         else:
             st.sidebar.error("❌ Master Key: Missing")
             
         # 2. Audit Log Check
-        log_path = "/home/team/shared/SCD_Dbase_Sorter/data/logs/audit_log.jsonl"
+        log_path = AUDIT_LOG_PATH
         if os.path.exists(log_path):
             log_size = os.path.getsize(log_path)
             if log_size > 0:
@@ -230,9 +251,9 @@ if st.sidebar.button("📤 Email Docs to Owner"):
     with st.sidebar:
         with st.spinner("Sending documents..."):
             doc_files = [
-                "/home/team/shared/SCD_Dbase_Sorter/TECHNICAL_MANUAL.md",
-                "/home/team/shared/SCD_Dbase_Sorter/USER_MANUAL.md",
-                "/home/team/shared/SCD_Dbase_Sorter/CHAT_HISTORY.md"
+                os.path.join(BASE_DIR, "TECHNICAL_MANUAL.md"),
+                os.path.join(BASE_DIR, "USER_MANUAL.md"),
+                os.path.join(BASE_DIR, "CHAT_HISTORY.md")
             ]
             # Check if files exist
             existing_docs = [f for f in doc_files if os.path.exists(f)]
@@ -1219,7 +1240,7 @@ else:
     # ====== Discovery Log Section ======
     with st.expander("📜 Discovery Log", expanded=False):
         st.subheader("Global Discovery Activity Log")
-        log_path = "/home/team/shared/SCD_Dbase_Sorter/data/logs/audit_log.jsonl"
+        log_path = AUDIT_LOG_PATH
         if os.path.exists(log_path):
             try:
                 import json

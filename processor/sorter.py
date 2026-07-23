@@ -9,10 +9,10 @@ from logger import audit_logger
 from hashing_service import get_master_patient_hashes, compare_hashes
 from mapping import load_and_map_data
 
-MASTER_DB_PATH = "/home/team/shared/SCD_Dbase_Sorter/data/master/Master_Database.xlsx"
-HOSPITALS_DIR = "/home/team/shared/SCD_Dbase_Sorter/data/hospitals/"
-STAGING_BASE_DIR = "/home/team/shared/SCD_Dbase_Sorter/data/staging"
-QUEUE_FILE = os.path.join(STAGING_BASE_DIR, "queue.json")
+try:
+    from .config import MASTER_DB_PATH, HOSPITALS_DIR, STAGING_DIR as STAGING_BASE_DIR, QUEUE_FILE
+except ImportError:
+    from config import MASTER_DB_PATH, HOSPITALS_DIR, STAGING_DIR as STAGING_BASE_DIR, QUEUE_FILE
 
 def ensure_directories():
     """Ensures necessary directories exist."""

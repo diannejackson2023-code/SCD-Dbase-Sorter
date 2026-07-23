@@ -1,7 +1,10 @@
 import os
 from cryptography.fernet import Fernet
 
-KEY_FILE = "/home/team/shared/SCD_Dbase_Sorter/data/config/.master.key"
+try:
+    from .config import MASTER_KEY_PATH as KEY_FILE
+except ImportError:
+    from config import MASTER_KEY_PATH as KEY_FILE
 
 def ensure_key():
     """Ensures a master key exists."""

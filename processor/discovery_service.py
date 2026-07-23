@@ -10,7 +10,10 @@ try:
 except ImportError:
     from logger import audit_logger
 
-DISCOVERY_DATA_FILE = "/home/team/shared/SCD_Dbase_Sorter/data/discovery_requests.json"
+try:
+    from .config import DISCOVERY_REQUESTS_PATH as DISCOVERY_DATA_FILE
+except ImportError:
+    from config import DISCOVERY_REQUESTS_PATH as DISCOVERY_DATA_FILE
 
 def _load_requests():
     if not os.path.exists(DISCOVERY_DATA_FILE):

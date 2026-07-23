@@ -3,8 +3,10 @@ import os
 from datetime import datetime
 import json
 
-LOG_DIR = "/home/team/shared/SCD_Dbase_Sorter/data/logs"
-AUDIT_LOG_FILE = os.path.join(LOG_DIR, "audit_log.jsonl")
+try:
+    from .config import LOGS_DIR as LOG_DIR, AUDIT_LOG_PATH as AUDIT_LOG_FILE
+except ImportError:
+    from config import LOGS_DIR as LOG_DIR, AUDIT_LOG_PATH as AUDIT_LOG_FILE
 
 class AuditLogger:
     def __init__(self):

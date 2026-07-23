@@ -28,6 +28,11 @@ except ImportError:
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
+try:
+    from .config import STAGING_DIR as STAGING_BASE_DIR, QUEUE_FILE
+except ImportError:
+    from config import STAGING_DIR as STAGING_BASE_DIR, QUEUE_FILE
+
 def lead_initiate_request(recipient_email, recipient_phone):
     """
     Called by the Lead Dashboard to start a discovery process.
@@ -99,11 +104,9 @@ def get_staging_queue(token):
     Retrieves the current staging queue status for a given token.
     Allows real-time UI polling of files coming from the Companion App.
     """
-    staging_dir = "/home/team/shared/SCD_Dbase_Sorter/data/staging"
-    queue_file = os.path.join(staging_dir, "queue.json")
-    if os.path.exists(queue_file):
+    if os.path.exists(QUEUE_FILE):
         try:
-            with open(queue_file, 'r') as f:
+            with open(QUEUE_FILE, 'r') as f:
                 queue = json.load(f)
                 return queue.get(token, [])
         except:
