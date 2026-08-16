@@ -1,8 +1,9 @@
 # SCD Dbase Sorter - Technical Manual
-**Version 1.4 (Milestone 4 Final)**
+**Version 1.8 (Multi-Entity Portal Update)**
+**Updated: 2026-07-23**
 
 ## 1. Project Overview
-The **SCD Dbase Sorter** is a Python-based automated system designed to manage medical records related to Sickle Cell Disease (SCD) across multiple hospitals. It automates the ingestion of inconsistent Excel data, sorts it into a master database, generates hospital-specific reports, and facilitates secure validation and notification via email. Milestone 4 introduces the **Superbot & Security Gateway** for proactive external discovery and structural data healing.
+The **SCD Dbase Sorter** is a Python-based automated system designed to manage medical records related to Sickle Cell Disease (SCD) across multiple hospitals. It automates the ingestion of inconsistent Excel data, sorts it into a master database, generates hospital-specific reports, and facilitates secure validation and notification via email.
 
 ## 2. Core Features
 - **Manual Mapping & Teaching System**: Provides a user interface to manually verify and correct column mappings. The system "learns" from manual corrections by saving new aliases to `aliases.json`.
@@ -53,7 +54,44 @@ Milestone 4 expands the discovery capabilities with a dedicated security layer a
 - **Real-Time Progress**: Shows files being staged by the companion app and their security status (Healthy, Warning, Blocked).
 - **Disappearing Animation**: Files are visually removed from the box one by one as they are successfully merged into the Master Database.
 
-## 5. Chronological Approval Log
+## 5. Milestone 5: Strict Accuracy Guardrails
+Milestone 5 shifts the system from "Automatic Healing" to a "Suggested Healing" model, ensuring that every automated correction is vetted by the Lead.
+
+### 5.1 Mandatory Review Flagging
+The ingestion engine (mapping.py) now detects high-risk automated corrections and tags them with a `Review_Required` flag. Triggers include:
+- **Fuzzy Match**: Headers corrected via Levenshtein distance matching.
+- **Deep Search**: Headers found beyond the first two rows of the file.
+- **Contextual Inference**: Column meanings inferred from data patterns (Regex).
+- **Structural Repair**: Merged cells unstacked or duplicate columns merged.
+
+### 5.2 Lead Verification Queue
+- **Gatekeeper Mechanism**: Records flagged for review are held in a `NEEDS_REVIEW` status in the staging queue.
+- **Verification Dashboard**: The Lead must explicitly "Approve" or "Correct" these suggestions before they are merged into the Master Database.
+- **Suggested Healing UI**: Shows the "Damaged" header vs the "Suggested" Master Heading to facilitate fast human verification.
+
+### 5.3 Learning with Consent
+When a Lead approves a suggested correction, the system adds the verified mapping to the Knowledge Base (`aliases.json`), ensuring that the same correction is "trusted" in future files from that source.
+
+## 6. Milestone 6: Global Launch Readiness
+Milestone 6 focuses on scaling the system for international use and ensuring the system is ready for the Owner Handover.
+
+### 6.1 Regional Multi-Tenancy
+Every record ingested now carries a mandatory `Region` tag, allowing the same database to support multiple clinical regions (e.g., SERHA, West Africa) without data contamination.
+
+### 6.2 Marketplace Template
+The SCD Dbase Sorter is finalized as a "Gold Standard" template for the cto.new Marketplace. It includes production-locked dependencies and standardized security protocols for immediate deployment.
+
+### 6.3 Handover Documentation
+A comprehensive `HANDOVER.md` has been prepared to guide the Owner through the final credential setup (Twilio, SMTP, PayPal).
+
+### 6.4 Multi-Entity Portal Landing Page
+The system features a professional landing page for clinical health authorities:
+- **Portal Entry Table**: A tabular UI listing all authorized entities (SERHA, SRHA, NERHA, WRHA, UWI, MoHW).
+- **Authorized Access**: Each entity has a dedicated "Sign In" button that triggers a password-protected authorization gate.
+- **Role Mapping**: Automatically maps MoHW to the "National Viewer" (View-Only) role and regional authorities to the "Admin" role.
+- **Clinical Aesthetics**: Designed with a clean, professional interface suitable for national health infrastructure.
+
+## 7. Chronological Approval Log
 Detailed record of project milestones and approvals.
 
 | Date | Task ID | Member | Role | Status | Message Body |
@@ -71,8 +109,11 @@ Detailed record of project milestones and approvals.
 | 2026-07-19 | b5db6ad0 | agent-ui-dev | UI Dev | Approved | Built the Visual Sync Box with animated file processing. |
 | 2026-07-19 | b11703fa | agent-data-eng | Data Eng | Approved | Implemented Atomic Export and Header Healing logic. |
 | 2026-07-19 | ceb8cc36 | agent-architect | Architect | Approved | Finalized manuals for Milestone 4: Superbot & Security Gateway. |
+| 2026-07-23 | 43bb3379 | agent-architect | Architect | Approved | Implemented Strict Accuracy Guardrails (Suggested Healing model). |
+| 2026-07-23 | 154c8ce4 | agent-architect | Architect | Approved | Finalized Owner Handover & Marketplace Documentation. |
+| 2026-07-23 | 37d1cc84 | agent-architect | Architect | Approved | Implemented Multi-Entity Portal Landing Page for Clinical Health Authorities. |
 
-## 6. Deployment Instructions
+## 8. Deployment Instructions
 1. Install dependencies: `pip install -r requirements.txt`
 2. Run the application: `streamlit run app.py`
 3. Access the Dashboard to initiate Discovery requests or upload files.
@@ -81,9 +122,9 @@ Detailed record of project milestones and approvals.
 
 ---
 
-## 7. Source Code Appendix
+## 9. Source Code Appendix
 
-### 7.1 /home/team/shared/SCD_Dbase_Sorter/app.py
+### 9.1 /home/team/shared/SCD_Dbase_Sorter/app.py
 ```python
 """
 SCD Dbase Sorter - Streamlit Dashboard
@@ -103,6 +144,12 @@ import io
 # Add processor directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "processor"))
 
+try:
+    import flask
+    print(f"Flask found at: {flask.__file__}")
+except ImportError:
+    print("Flask NOT found in main app.py")
+
 # Import team modules
 from mapping import (
     load_and_map_data, 
@@ -113,7 +160,8 @@ from mapping import (
     load_aliases,
     save_new_alias
 )
-from sorter import process_new_data, MASTER_DB_PATH, HOSPITALS_DIR
+from sorter import process_new_data, atomic_merge_staging_files
+from config import MASTER_DB_PATH, HOSPITALS_DIR, AUDIT_LOG_PATH, MASTER_KEY_PATH, QUEUE_FILE, BASE_DIR
 from encryption import decrypt_file_to_memory
 from logger import audit_logger
 from mailer import (
@@ -127,6 +175,35 @@ from mailer import (
     export_df_to_excel
 )
 from payments import render_paypal_button
+from discovery_api import lead_initiate_request, get_final_discovered_df, get_staging_queue
+
+# --- Start Staging API in Background ---
+import threading
+try:
+    try:
+        from staging_api import app as staging_app
+    except ImportError:
+        from processor.staging_api import app as staging_app
+        
+    def run_staging_api():
+        # Use a different port than Streamlit (Streamlit usually 8501)
+        # Port 5000 is default for the Companion App
+        try:
+            staging_app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)
+        except Exception as e:
+            print(f"Staging API background error: {e}")
+
+    # Check if already running to avoid port conflicts during reruns
+    if "staging_api_started" not in st.session_state:
+        api_thread = threading.Thread(target=run_staging_api, daemon=True)
+        api_thread.start()
+        st.session_state.staging_api_started = True
+        audit_logger.log_action("STAGING_API_STARTED_BACKGROUND", details={"port": 5000})
+except (ImportError, Exception) as e:
+    import traceback
+    traceback.print_exc()
+    st.error(f"Could not load Staging API: {e}. Companion App features may be disabled.")
+# --------------------------------------
 
 # ──────────────────────────────────────────────
 # Page Configuration
@@ -152,15 +229,115 @@ def check_system_health():
     # st.write(st.context.headers) 
     
     # Check for Master Database Password initialization
-    if not os.path.exists("/home/team/shared/SCD_Dbase_Sorter/data/master/Master_Database.xlsx"):
+    if not os.path.exists(MASTER_DB_PATH):
         warnings.append("⚠️ **Master Database not initialized.** Please upload a file to begin.")
         is_healthy = False
         
     return is_healthy, warnings
 
 # ──────────────────────────────────────────────
+# Authorization & Security
+# ──────────────────────────────────────────────
+# Master DB Password Store (simple hashed passwords for authorization)
+MASTER_DB_PASSWORD_HASH = "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"  # sha256("admin")
+NATIONAL_VIEWER_PASSWORD_HASH = "b176c94eb4cd6f378b6757f1c971b643469dd80f98eca1a278273ccf57ce4c31" # sha256("national-view-2026")
+
+import hashlib
+
+def verify_master_db_password(password):
+    """Verifies the Master Database password for Admin role."""
+    return hashlib.sha256(password.encode()).hexdigest() == MASTER_DB_PASSWORD_HASH
+
+def verify_national_viewer_password(password):
+    """Verifies the National Viewer password for View-Only role."""
+    return hashlib.sha256(password.encode()).hexdigest() == NATIONAL_VIEWER_PASSWORD_HASH
+
+ENTITIES = [
+    {"name": "SERHA", "full_name": "South East Regional Health Authority", "role": "admin", "type": "Clinical Lead"},
+    {"name": "SRHA", "full_name": "Southern Regional Health Authority", "role": "admin", "type": "Clinical Lead"},
+    {"name": "NERHA", "full_name": "North East Regional Health Authority", "role": "admin", "type": "Clinical Lead"},
+    {"name": "WRHA", "full_name": "Western Regional Health Authority", "role": "admin", "type": "Clinical Lead"},
+    {"name": "UWI", "full_name": "Sickle Cell Unit, University Hospital of the West Indies", "role": "admin", "type": "Clinical Lead"},
+    {"name": "MoHW", "full_name": "Family Health Unit, Ministry of Health & Wellness", "role": "viewer", "type": "Oversight/View-Only"}
+]
+
+def render_portal_landing():
+    """Redesigns the landing page to feature a professional Portal Entry Table."""
+    st.title("🏥 SCD Global Data Portal")
+    st.markdown("### Authorized Entity Access")
+    st.markdown("Welcome to the **SCD Dbase Sorter**. Please select your organization to sign in.")
+    
+    # Professional Portal Table UI
+    st.markdown("---")
+    
+    # Table Header
+    h_col1, h_col2, h_col3 = st.columns([3, 2, 1])
+    with h_col1: st.markdown("**Authorized Clinical Entity**")
+    with h_col2: st.markdown("**Access Role / Type**")
+    with h_col3: st.markdown("**Action**")
+    st.markdown("---")
+    
+    for entity in ENTITIES:
+        col1, col2, col3 = st.columns([3, 2, 1])
+        with col1:
+            st.write(f"**{entity['full_name']}**")
+        with col2:
+            st.write(entity['type'])
+        with col3:
+            if st.button("Sign In", key=f"portal_signin_{entity['name']}", use_container_width=True):
+                st.session_state.signing_in_entity = entity
+                st.rerun()
+        st.divider()
+
+    # Sign-In Prompt (Overlay/Dialog style)
+    if st.session_state.signing_in_entity:
+        entity = st.session_state.signing_in_entity
+        st.markdown(f"### 🔐 Authorization Required: {entity['name']}")
+        st.info(f"You are signing in as an authorized representative of **{entity['full_name']}**.")
+        
+        auth_password = st.text_input(
+            "Enter Security Password",
+            type="password",
+            key="portal_password_input",
+            help=f"Enter the password assigned to {entity['name']}."
+        )
+        
+        btn_col1, btn_col2 = st.columns([1, 4])
+        with btn_col1:
+            if st.button("Verify", type="primary", use_container_width=True):
+                success = False
+                if entity['role'] == "admin":
+                    if verify_master_db_password(auth_password):
+                        st.session_state.user_role = "admin"
+                        success = True
+                else: # viewer
+                    if verify_national_viewer_password(auth_password):
+                        st.session_state.user_role = "viewer"
+                        success = True
+                
+                if success:
+                    st.session_state.user_entity = entity['name']
+                    st.session_state.discovery_authorized = (entity['role'] == "admin")
+                    st.session_state.signing_in_entity = None
+                    audit_logger.log_action("ENTITY_PORTAL_LOGIN", details={"entity": entity['name'], "role": entity['role']})
+                    st.success("Authorization successful! Loading dashboard...")
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid password for the selected entity.")
+        with btn_col2:
+            if st.button("Cancel", use_container_width=True):
+                st.session_state.signing_in_entity = None
+                st.rerun()
+
+# ──────────────────────────────────────────────
 # Session State Initialization
 # ──────────────────────────────────────────────
+if "user_role" not in st.session_state:
+    st.session_state.user_role = None
+if "user_entity" not in st.session_state:
+    st.session_state.user_entity = None
+if "signing_in_entity" not in st.session_state:
+    st.session_state.signing_in_entity = None
 if "processed_data" not in st.session_state:
     st.session_state.processed_data = None
 if "master_df" not in st.session_state:
@@ -184,6 +361,25 @@ if "final_discovered_df" not in st.session_state:
 # Sidebar: Configuration & Info
 # ──────────────────────────────────────────────
 st.sidebar.title("🔧 SCD Dbase Sorter")
+
+if st.session_state.user_role == "viewer":
+    st.sidebar.warning("👁️ National Oversight Mode")
+    st.sidebar.info(f"**Entity:** {st.session_state.user_entity}")
+    st.sidebar.caption("View-Only Access Enabled")
+elif st.session_state.user_role == "admin":
+    st.sidebar.success("🛡️ Admin Mode")
+    st.sidebar.info(f"**Entity:** {st.session_state.user_entity}")
+    st.sidebar.caption("Full Access Enabled")
+else:
+    st.sidebar.info("🔒 Restricted Mode")
+    st.sidebar.caption("Please select entity in Dashboard")
+
+if st.session_state.user_role:
+    if st.sidebar.button("🔓 Logout", use_container_width=True):
+        st.session_state.user_role = None
+        st.session_state.user_entity = None
+        st.session_state.discovery_authorized = False
+        st.rerun()
 
 # Health Check Status
 healthy, msgs = check_system_health()
@@ -211,7 +407,7 @@ smtp_pass = st.sidebar.text_input("SMTP Password", type="password", value="")
 smtp_from = st.sidebar.text_input("From Email", value="scd.database@example.com")
 smtp_from_name = st.sidebar.text_input("From Name", value="SCD Database System")
 
-if st.sidebar.button("Save SMTP Settings"):
+if st.sidebar.button("Save SMTP Settings", disabled=st.session_state.user_role != "admin"):
     configure_smtp(
         host=smtp_host,
         port=int(smtp_port),
@@ -267,14 +463,14 @@ if admin_mode:
         st.sidebar.subheader("🛡️ Security Health Check")
         
         # 1. Key File Check
-        key_path = "/home/team/shared/SCD_Dbase_Sorter/data/config/.master.key"
+        key_path = MASTER_KEY_PATH
         if os.path.exists(key_path):
             st.sidebar.success("✅ Master Key: Found")
         else:
             st.sidebar.error("❌ Master Key: Missing")
             
         # 2. Audit Log Check
-        log_path = "/home/team/shared/SCD_Dbase_Sorter/data/logs/audit_log.jsonl"
+        log_path = AUDIT_LOG_PATH
         if os.path.exists(log_path):
             log_size = os.path.getsize(log_path)
             if log_size > 0:
@@ -316,9 +512,9 @@ if st.sidebar.button("📤 Email Docs to Owner"):
     with st.sidebar:
         with st.spinner("Sending documents..."):
             doc_files = [
-                "/home/team/shared/SCD_Dbase_Sorter/TECHNICAL_MANUAL.md",
-                "/home/team/shared/SCD_Dbase_Sorter/USER_MANUAL.md",
-                "/home/team/shared/SCD_Dbase_Sorter/CHAT_HISTORY.md"
+                os.path.join(BASE_DIR, "TECHNICAL_MANUAL.md"),
+                os.path.join(BASE_DIR, "USER_MANUAL.md"),
+                os.path.join(BASE_DIR, "CHAT_HISTORY.md")
             ]
             # Check if files exist
             existing_docs = [f for f in doc_files if os.path.exists(f)]
@@ -353,7 +549,18 @@ st.sidebar.caption("SCD Dbase Sorter v1.1")
 # ──────────────────────────────────────────────
 # Main Dashboard Content
 # ──────────────────────────────────────────────
+# Redesign landing page to feature Portal Entry Table if not authorized
+if st.session_state.user_role is None and discovery_mode != "📥 Recipient Portal":
+    render_portal_landing()
+    st.stop() # Force user to use portal for Dashboard and Discovery tasks
+
 st.title("📊 SCD Dbase Sorter Dashboard")
+
+if st.session_state.user_role == "viewer":
+    st.warning("👁️ **National Oversight Mode (View-Only)**")
+elif st.session_state.user_role == "admin":
+    st.success("🛡️ **Admin Mode Active**")
+
 st.markdown("Upload Excel data, process & sort, then validate and email.")
 
 # ====== STEP 1: File Upload ======
@@ -476,7 +683,8 @@ if uploaded_file is not None:
                 if selected != "None":
                     user_mapping[i] = selected
 
-        if st.button("🎓 Confirm & Teach System", type="secondary"):
+        teach_disabled = st.session_state.user_role != "admin"
+        if st.button("🎓 Confirm & Teach System", type="secondary", disabled=teach_disabled):
             # Update aliases for anything changed or newly mapped
             for col_idx, master in user_mapping.items():
                 h1 = df_headers.iloc[0, col_idx]
@@ -498,7 +706,11 @@ if uploaded_file is not None:
     # ====== STEP 2: Process & Sort ======
     st.header("Step 2: Process & Sort Data")
     
-    process_disabled = not st.session_state.mapping_confirmed
+    # Process is disabled if mapping not confirmed OR user is view-only
+    process_disabled = not st.session_state.mapping_confirmed or st.session_state.user_role != "admin"
+    
+    if st.session_state.user_role == "viewer":
+        st.warning("⚠️ Process & Sort is disabled in National Oversight Mode.")
 
     if st.button("🚀 Process & Sort", type="primary", use_container_width=True, disabled=process_disabled):
         with st.spinner("Processing and sorting data... This may take a moment."):
@@ -654,8 +866,10 @@ if st.session_state.processing_complete and st.session_state.master_df is not No
         
         # Option to email all hospitals at once
         col_bulk1, col_bulk2 = st.columns(2)
+        bulk_disabled = st.session_state.user_role != "admin"
+        
         with col_bulk1:
-            if st.button("📨 Send Validation Requests (All Hospitals)", use_container_width=True):
+            if st.button("📨 Send Validation Requests (All Hospitals)", use_container_width=True, disabled=bulk_disabled):
                 with st.spinner("Sending validation requests..."):
                     results = {}
                     for hospital in hospitals_list:
@@ -678,7 +892,7 @@ if st.session_state.processing_complete and st.session_state.master_df is not No
                     )
         
         with col_bulk2:
-            if st.button("📨 Send Finalized Data (All Hospitals)", use_container_width=True):
+            if st.button("📨 Send Finalized Data (All Hospitals)", use_container_width=True, disabled=bulk_disabled):
                 with st.spinner("Sending finalized data to hospitals..."):
                     results = {}
                     for hospital in hospitals_list:
@@ -721,7 +935,7 @@ if st.session_state.processing_complete and st.session_state.master_df is not No
             valid_email = get_validator_email(selected_hosp) if selected_hosp else "N/A"
             st.info(f"**Validator Email:** {valid_email or 'Not configured'}")
         
-        if st.button("📤 Send Now", type="primary"):
+        if st.button("📤 Send Now", type="primary", disabled=bulk_disabled):
             if selected_hosp and not pd.isna(selected_hosp):
                 hosp_data = master_df[master_df["Hospital"] == selected_hosp]
                 safe_name = str(selected_hosp).strip().replace(" ", "_")
@@ -754,7 +968,7 @@ else:
                     hospitals_list = existing_df["Hospital"].dropna().unique()
                     selected_hosp = st.selectbox("Select Hospital:", sorted(hospitals_list))
                     
-                    if st.button("📤 Send Validation Request"):
+                    if st.button("📤 Send Validation Request", disabled=bulk_disabled):
                         hosp_data = existing_df[existing_df["Hospital"] == selected_hosp]
                         safe_name = str(selected_hosp).strip().replace(" ", "_")
                         temp_attach = os.path.join(tempfile.gettempdir(), f"{safe_name}_data.xlsx")
@@ -776,13 +990,6 @@ from discovery_api import lead_initiate_request, get_final_discovered_df
 from discovery_service import get_discovery_request, update_discovery_status, _load_requests
 import hashlib
 import datetime
-
-# Master DB Password Store (simple hashed password for authorization)
-MASTER_DB_PASSWORD_HASH = "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"  # sha256("admin")
-
-def verify_master_db_password(password):
-    """Verifies the Master Database password."""
-    return hashlib.sha256(password.encode()).hexdigest() == MASTER_DB_PASSWORD_HASH
 
 # Session state for password authorization
 if "discovery_authorized" not in st.session_state:
@@ -810,7 +1017,9 @@ if discovery_mode == "🔍 Discovery Initiation":
                     with col_ph:
                         r_phone = st.text_input("Mobile *", placeholder="5551234567", key="sgl_phone")
                     st.caption("* Required")
-                    if st.form_submit_button("📤 Send Discovery Request", type="primary", use_container_width=True):
+                    # Gated for admin only
+                    disc_init_disabled = st.session_state.user_role != "admin"
+                    if st.form_submit_button("📤 Send Discovery Request", type="primary", use_container_width=True, disabled=disc_init_disabled):
                         errors = []
                         if not r_email or "@" not in r_email:
                             errors.append("Valid email required.")
@@ -851,7 +1060,7 @@ if discovery_mode == "🔍 Discovery Initiation":
         with col_bph:
             st.caption("Will be prepended to all phone numbers without a leading '+'")
         
-        if st.button("📤 Send Bulk Discovery Requests", type="primary", use_container_width=True):
+        if st.button("📤 Send Bulk Discovery Requests", type="primary", use_container_width=True, disabled=disc_init_disabled):
             if not bulk_text.strip():
                 st.error("Please enter at least one recipient.")
             else:
@@ -904,7 +1113,7 @@ if discovery_mode == "🔍 Discovery Initiation":
                     valid = csv_df.dropna(subset=['email'])
                     st.info(f"📊 Found {len(valid)} valid recipients in CSV.")
                     
-                    if st.button("📤 Send From CSV", type="primary", use_container_width=True):
+                    if st.button("📤 Send From CSV", type="primary", use_container_width=True, disabled=disc_init_disabled):
                         recipients = []
                         for _, row in valid.iterrows():
                             phone = str(row['phone']).strip()
@@ -1032,13 +1241,13 @@ elif discovery_mode == "📋 Request Tracking":
             # Expand/collapse controls
             col_revoke, col_purge = st.columns(2)
             with col_revoke:
-                if st.button("🔴 Revoke Token", type="secondary", use_container_width=True):
+                if st.button("🔴 Revoke Token", type="secondary", use_container_width=True, disabled=disc_init_disabled):
                     from discovery_service import revoke_discovery_token
                     revoke_discovery_token(full_token)
                     st.success(f"Token {token_select} revoked.")
                     st.rerun()
             with col_purge:
-                if st.button("🧹 Purge Expired Tokens", use_container_width=True):
+                if st.button("🧹 Purge Expired Tokens", use_container_width=True, disabled=disc_init_disabled):
                     purge_expired_requests()
                     st.success("Expired tokens purged.")
                     st.rerun()
@@ -1225,31 +1434,76 @@ else:
         
         st.markdown("---")
         
-        # Step C: Password Authorization Gate
-        st.subheader("🔐 Master Database Password — Authorization Required")
+        # Step B.5: Lead Verification Queue (Suggested Healing)
+        st.subheader("⚖️ Lead Verification Queue (Suggested Healing)")
+        st.markdown("The following files were flagged for review due to automated healing triggers.")
         
-        if not st.session_state.discovery_authorized:
-            st.warning("⚠️ Append/Update operations require Master Database password authorization.")
-            
-            disc_password = st.text_input(
-                "Enter Master Database Password",
-                type="password",
-                key="discovery_db_password_dash",
-                help="Enter the authorized Master Database password to enable write operations.",
-            )
-            
-            if st.button("🔑 Authorize", type="primary", use_container_width=True):
-                if verify_master_db_password(disc_password):
-                    st.session_state.discovery_authorized = True
-                    st.rerun()
-                    audit_logger.log_action("DISCOVERY_AUTHORIZED", details={})
-                else:
-                    st.error("❌ Incorrect Master Database Password. Access denied.")
+        needs_review_items = []
+        # Re-load requests to ensure we have latest status
+        current_reqs = _load_requests()
+        for tkn, req_data in current_reqs.items():
+            # Check staged files for this token
+            items = req_data.get('email_results', []) + req_data.get('local_results', [])
+            for itm in items:
+                if itm.get('status') == 'NEEDS_REVIEW':
+                    needs_review_items.append({
+                        "token": tkn,
+                        "filename": itm.get('filename'),
+                        "recipient": req_data.get('recipient_email', 'N/A'),
+                        "trigger": itm.get('details', 'Healed/Fuzzy Match')
+                    })
+        
+        if needs_review_items:
+            for idx, item in enumerate(needs_review_items):
+                with st.expander(f"Review: {item['filename']} (from {item['recipient']})", expanded=True):
+                    st.warning(f"**Trigger:** {item['trigger']}")
+                    st.info("System suggested a mapping based on fuzzy matching or contextual inference.")
+                    
+                    col_app, col_rej = st.columns(2)
+                    with col_app:
+                        # Disable for non-admins
+                        app_disabled = st.session_state.user_role != "admin"
+                        if st.button(f"✅ Approve & Merge", key=f"app_{idx}", disabled=app_disabled):
+                            from sorter import approve_and_merge_staged_file
+                            res = approve_and_merge_staged_file(item['token'], item['filename'])
+                            if "error" in res:
+                                st.error(res["error"])
+                            else:
+                                st.success(f"Merged {res.get('records', 0)} records!")
+                                st.rerun()
+                    with col_rej:
+                        if st.button(f"❌ Reject & Purge", key=f"rej_{idx}", disabled=app_disabled):
+                            st.info("Purging staged file...")
+                            try:
+                                from sorter import update_queue_status_local
+                                import os
+                                staging_p = os.path.join("/home/team/shared/SCD_Dbase_Sorter/data/staging", item['token'], item['filename'])
+                                if os.path.exists(staging_p): os.remove(staging_p)
+                                update_queue_status_local(item['token'], item['filename'], "REJECTED", "Lead rejected mapping")
+                                st.success("Purged.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Purge failed: {e}")
         else:
-            st.success("✅ **Authorized.** Write operations are enabled for this session.")
-            if st.button("🔓 Revoke Access & Lock", use_container_width=True):
-                st.session_state.discovery_authorized = False
-                st.rerun()
+            st.success("✅ No items currently require verification.")
+        
+        st.markdown("---")
+        
+        # Step C: Authorization Status
+        st.subheader("🔐 System Authorization Status")
+        
+        if st.session_state.user_role == "viewer":
+            st.warning(f"👁️ **National Oversight Mode (View-Only)** - Entity: **{st.session_state.user_entity}**")
+            st.info("You can view all data and metrics, but write operations are disabled.")
+        elif st.session_state.user_role == "admin":
+            st.success(f"🛡️ **Admin Mode Active** - Entity: **{st.session_state.user_entity}**")
+            st.info("Full access to append, merge, and update records.")
+
+        if st.button("🔓 Logout & Lock Session", use_container_width=True):
+            st.session_state.user_role = None
+            st.session_state.user_entity = None
+            st.session_state.discovery_authorized = False
+            st.rerun()
         
         st.markdown("---")
         
@@ -1305,7 +1559,7 @@ else:
     # ====== Discovery Log Section ======
     with st.expander("📜 Discovery Log", expanded=False):
         st.subheader("Global Discovery Activity Log")
-        log_path = "/home/team/shared/SCD_Dbase_Sorter/data/logs/audit_log.jsonl"
+        log_path = AUDIT_LOG_PATH
         if os.path.exists(log_path):
             try:
                 import json
@@ -1337,108 +1591,140 @@ else:
     st.subheader("🔄 Visual Sync Box — Live Export Queue")
     st.caption("Monitors files staged for merging into the Master Database.")
     
-    # Session state for sync box
-    if "sync_box_files" not in st.session_state:
-        st.session_state.sync_box_files = [
-            {"name": "SCD_Data_CityGen.xlsx", "records": 45, "shield": "🟢", "status": "Healthy", "size": "2.3 MB"},
-            {"name": "Patient_Records_StJude.docx", "records": 12, "shield": "🟡", "status": "Warning", "size": "1.1 MB", "note": "Mixed encodings"},
-            {"name": "Hemoglobin_Results_Mercy.xlsx", "records": 78, "shield": "🔴", "status": "Blocked", "size": "4.7 MB", "note": "Password protected"},
-            {"name": "SCD_Screening_General.xlsx", "records": 23, "shield": "🟢", "status": "Healthy", "size": "0.9 MB"},
-        ]
+    # Real Queue Loading
+    def load_real_queue():
+        all_reqs = _load_requests()
+        all_items = []
+        for token, req in all_reqs.items():
+            staged = get_staging_queue(token)
+            for item in staged:
+                if item.get("status") in ["STAGED", "NEEDS_REVIEW"]:
+                    item["token"] = token
+                    item["recipient"] = req.get("recipient_email", "Unknown")
+                    # Map shield based on status
+                    if item.get("status") == "NEEDS_REVIEW":
+                        item["shield"] = "🟡"
+                    elif "error" in item:
+                        item["shield"] = "🔴"
+                    else:
+                        item["shield"] = "🟢"
+                    all_items.append(item)
+        return all_items
+
     if "sync_box_exporting" not in st.session_state:
         st.session_state.sync_box_exporting = False
-    if "sync_box_exported" not in st.session_state:
-        st.session_state.sync_box_exported = []
+    
+    staged_files = load_real_queue()
     
     # Box container
     box = st.container()
     with box:
-        if not st.session_state.sync_box_exporting and not st.session_state.sync_box_exported:
-            # Full queue display
-            total_records = sum(f["records"] for f in st.session_state.sync_box_files)
-            healthy = sum(1 for f in st.session_state.sync_box_files if f["shield"] == "🟢")
-            warnings = sum(1 for f in st.session_state.sync_box_files if f["shield"] == "🟡")
-            blocked = sum(1 for f in st.session_state.sync_box_files if f["shield"] == "🔴")
-            
-            col_b1, col_b2, col_b3, col_b4 = st.columns(4)
-            with col_b1: st.metric("📦 Files", len(st.session_state.sync_box_files))
-            with col_b2: st.metric("📊 Records", total_records)
-            with col_b3: st.metric("🟢 Healthy", healthy)
-            with col_b4: st.metric("🔴 Blocked", blocked)
-            
-            # File cards with shield icons
-            for f in st.session_state.sync_box_files:
-                cols = st.columns([1, 3, 1, 1, 2])
-                with cols[0]: st.markdown(f"**{f['shield']}**", help=f"Security status: {f['status']}")
-                with cols[1]: st.markdown(f"**{f['name']}**")
-                with cols[2]: st.markdown(f"_{f['records']}_ recs")
-                with cols[3]: st.markdown(f"_{f['size']}_")
-                with cols[4]:
-                    if f['status'] == "Healthy":
-                        st.markdown("🟢 Ready")
-                    elif f['status'] == "Warning":
-                        st.markdown(f"🟡 {f.get('note', 'Review')}")
+        if not st.session_state.sync_box_exporting:
+            if not staged_files:
+                st.info("📭 No files currently in the live export queue.")
+            else:
+                # Summary metrics
+                total_records = sum(int(f.get("records", 0)) for f in staged_files)
+                healthy = sum(1 for f in staged_files if f.get("shield") == "🟢")
+                review = sum(1 for f in staged_files if f.get("shield") == "🟡")
+                blocked = sum(1 for f in staged_files if f.get("shield") == "🔴")
+                
+                col_b1, col_b2, col_b3, col_b4 = st.columns(4)
+                with col_b1: st.metric("📦 Files", len(staged_files))
+                with col_b2: st.metric("📊 Records", total_records)
+                with col_b3: st.metric("🟢 Ready / 🟡 Review", f"{healthy} / {review}")
+                with col_b4: st.metric("🔴 Blocked", blocked)
+                
+                # File cards with shield icons
+                for f in staged_files:
+                    cols = st.columns([1, 3, 1, 1, 2])
+                    with cols[0]: st.markdown(f"**{f['shield']}**")
+                    with cols[1]: 
+                        st.markdown(f"**{f['filename']}**\n\n*(From: {f['recipient']})*")
+                        if f.get('status') == 'NEEDS_REVIEW':
+                            st.caption(f"⚠️ {f.get('details', 'Review required')}")
+                    with cols[2]: st.markdown(f"_{f.get('records', '?')}_ recs")
+                    with cols[3]: st.markdown(f"_{f.get('size', '?')}_")
+                    with cols[4]:
+                        status = f.get("status", "STAGED")
+                        if status == "STAGED":
+                            st.markdown("🟢 Ready")
+                        elif status == "NEEDS_REVIEW":
+                            if st.button("✅ Approve", key=f"appr_{f['token']}_{f['filename']}", type="primary", disabled=st.session_state.user_role != "admin"):
+                                if not st.session_state.discovery_authorized:
+                                    st.warning("🔐 Authorize first!")
+                                else:
+                                    from sorter import approve_and_merge_staged_file
+                                    res = approve_and_merge_staged_file(f['token'], f['filename'])
+                                    if "error" in res:
+                                        st.error(res['error'])
+                                    else:
+                                        st.success(f"Merged {res.get('records', 0)} records")
+                                        st.rerun()
+                        else:
+                            st.markdown(f"⚪ {status}")
+                    st.divider()
+                
+                # Export button
+                export_disabled = st.session_state.user_role != "admin"
+                if st.button("🚀 Start Atomic Export to Database", type="primary", use_container_width=True, disabled=export_disabled):
+                    if not st.session_state.discovery_authorized:
+                        st.warning("🔐 Please authorize via the Master Database Password above.")
                     else:
-                        st.markdown(f"🔴 {f.get('note', 'Blocked')}")
-                st.divider()
-            
-            # Export button
-            if st.button("🚀 Start Export to Database", type="primary", use_container_width=True):
-                st.session_state.sync_box_exporting = True
-                st.rerun()
+                        st.session_state.sync_box_exporting = True
+                        st.rerun()
         
-        elif st.session_state.sync_box_exporting:
-            # Animated disappearing process
-            progress_bar = st.progress(0, text="Initializing export...")
+        else:
+            # Atomic Export Execution
+            progress_bar = st.progress(0, text="Initializing atomic export...")
             status_placeholder = st.empty()
-            queue_files = [f for f in st.session_state.sync_box_files if f["name"] not in st.session_state.sync_box_exported]
             
-            if not queue_files:
-                # All done — box vanishes
-                st.session_state.sync_box_exporting = False
-                st.session_state.sync_box_exported = True
-                st.rerun()
+            total = len(staged_files)
+            tokens_to_process = list(set(f["token"] for f in staged_files))
             
-            total = len(st.session_state.sync_box_files)
-            done = len(st.session_state.sync_box_exported)
-            
-            # Show remaining files with a "disappearing" effect
-            for idx, f in enumerate(queue_files):
-                status_placeholder.info(f"📤 Exporting **{f['name']}** ({f['records']} records)...")
-                progress_bar.progress(int((done + idx) / total * 100), text=f"Processing {idx+1}/{len(queue_files)} remaining...")
+            done_count = 0
+            for token in tokens_to_process:
+                token_files = [f for f in staged_files if f["token"] == token]
+                for f in token_files:
+                    status_placeholder.info(f"📤 Exporting **{f['filename']}** from {f['recipient']}...")
+                    
+                    # Call the REAL atomic merge function
+                    # It processes ALL staged files for this token
+                    # But we can call it once per token or once for all.
+                    # Given the function signature, it processes all for the token.
+                    pass
                 
-                # Simulate file processing
+                # Trigger real merge for this token
+                merge_result = atomic_merge_staging_files(token)
+                
+                for res in merge_result.get("results", []):
+                    done_count += 1
+                    progress_val = int((done_count) / total * 100)
+                    progress_bar.progress(progress_val, text=f"Processed {done_count}/{total} files...")
+                    
+                    if res["status"] == "SUCCESS":
+                        st.success(f"✅ **Merged:** {res['filename']} ({res.get('records', 0)} new records)")
+                    elif res["status"] == "SKIPPED":
+                        st.info(f"⏭️ **Skipped:** {res['filename']} (All duplicates)")
+                    else:
+                        st.error(f"❌ **Failed:** {res['filename']} - {res.get('error')}")
+                
                 import time
-                time.sleep(0.8)
-                st.session_state.sync_box_exported.append(f["name"])
-                
-                # Show files removed so far
-                if st.session_state.sync_box_exported:
-                    removed_str = ", ".join(st.session_state.sync_box_exported)
-                    st.success(f"✅ **Merged:** {removed_str}")
+                time.sleep(0.5) # Small pause for visual feedback
             
-            progress_bar.progress(100, text="Export complete!")
-            status_placeholder.success("✅ All files processed!")
-            
-            # Clear state and vanish
-            st.session_state.sync_box_exporting = False
-            st.session_state.sync_box_exported = True
-            time.sleep(1)
-            st.rerun()
-        
-        elif st.session_state.sync_box_exported is True:
-            # Box has vanished — all done
-            st.success("✅ **Sync Complete!** All files have been successfully merged into the Master Database.")
+            progress_bar.progress(100, text="Atomic export complete!")
             st.balloons()
-            if st.button("🔄 Reset Sync Box", use_container_width=True):
-                st.session_state.sync_box_files = [
-                    {"name": "SCD_Data_CityGen.xlsx", "records": 45, "shield": "🟢", "status": "Healthy", "size": "2.3 MB"},
-                    {"name": "Patient_Records_StJude.docx", "records": 12, "shield": "🟡", "status": "Warning", "size": "1.1 MB", "note": "Mixed encodings"},
-                    {"name": "Hemoglobin_Results_Mercy.xlsx", "records": 78, "shield": "🔴", "status": "Blocked", "size": "4.7 MB", "note": "Password protected"},
-                    {"name": "SCD_Screening_General.xlsx", "records": 23, "shield": "🟢", "status": "Healthy", "size": "0.9 MB"},
-                ]
-                st.session_state.sync_box_exporting = False
-                st.session_state.sync_box_exported = []
+            st.session_state.sync_box_exporting = False
+            
+            # Refresh master DF in session state
+            try:
+                decrypted_master = decrypt_file_to_memory(MASTER_DB_PATH)
+                if decrypted_master:
+                    st.session_state.master_df = pd.read_excel(io.BytesIO(decrypted_master))
+            except:
+                pass
+                
+            if st.button("✅ Finish & Clear Box", use_container_width=True):
                 st.rerun()
     
     st.markdown("---")
@@ -1509,7 +1795,7 @@ else:
                     with col_fsize:
                         st.info(f"**Size:** {len(discovered_file.getvalue()) / 1024:.1f} KB")
                     
-                    if st.button("📤 Submit Discovery Files", type="primary", use_container_width=True):
+                    if st.button("📤 Submit Discovery Files", type="primary", use_container_width=True, disabled=st.session_state.user_role != "admin"):
                         with st.spinner("Processing..."):
                             try:
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(discovered_file.name)[1]) as tmp:
@@ -1601,7 +1887,7 @@ else:
 st.caption("SCD Dbase Sorter | Built with Streamlit | Team SCD Dbase Sorter")
 ```
 
-### 7.2 /home/team/shared/SCD_Dbase_Sorter/processor/mapping.py
+### 9.2 /home/team/shared/SCD_Dbase_Sorter/processor/mapping.py
 ```python
 import pandas as pd
 import numpy as np
@@ -1609,17 +1895,47 @@ import os
 import io
 import msoffcrypto
 import json
+import re
 
 from sanitization import sanitize_dataframe
 from logger import audit_logger
 
 # Standard Master Headings
 MASTER_HEADINGS = [
-    "Patient_ID", "Patient_Name", "Hospital", "Year", "Validation_Status", 
+    "Patient_ID", "Patient_Name", "Hospital", "Region", "Year", "Validation_Status", 
     "Validator_Email", "Hospital_Email", "Date_Added", "Treatment", "Outcome"
 ]
 
-ALIAS_FILE = "/home/team/shared/SCD_Dbase_Sorter/data/config/aliases.json"
+# Learned Patterns for Header Recovery
+PATTERNS = {
+    "Patient_ID": r"^[A-Z0-9]{4,12}$",
+    "Validator_Email": r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$",
+    "Hospital_Email": r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$",
+    "Year": r"^(19|20)\d{2}$"
+}
+
+def infer_heading_from_data(data_sample):
+    """
+    Attempts to infer the master heading based on data patterns.
+    """
+    if data_sample.empty:
+        return None
+        
+    for master, pattern in PATTERNS.items():
+        # Check if at least 50% of non-null samples match the pattern
+        valid_samples = data_sample.dropna()
+        if valid_samples.empty:
+            continue
+            
+        matches = valid_samples.astype(str).apply(lambda x: bool(re.match(pattern, x)))
+        if matches.mean() >= 0.5:
+            return master
+    return None
+
+try:
+    from .config import ALIASES_PATH as ALIAS_FILE, HOSPITAL_EMAILS_PATH as CONFIG_PATH
+except ImportError:
+    from config import ALIASES_PATH as ALIAS_FILE, HOSPITAL_EMAILS_PATH as CONFIG_PATH
 
 def load_aliases():
     """Loads aliases from the JSON file."""
@@ -1631,6 +1947,7 @@ def load_aliases():
         "Year": ["Yr", "Data_Year", "Period", "Year of Data"],
         "Patient_ID": ["Pt_No", "Patient ID", "ID", "Case_No", "Patient_ID"],
         "Patient_Name": ["Name", "Patient Name", "Full Name", "Pt Name"],
+        "Region": ["Zone", "Area", "County", "District", "Province", "Regional"],
         "Treatment": ["Rx", "Therapy", "Treatment"],
         "Outcome": ["Result", "Status", "Outcome"]
     }
@@ -1688,23 +2005,26 @@ def levenshtein_distance(s1, s2):
     return previous_row[-1]
 
 def find_master_match(header_text, use_fuzzy=True):
-    """Checks if header_text matches any master heading or alias."""
+    """
+    Checks if header_text matches any master heading or alias.
+    Returns (match_name, is_fuzzy)
+    """
     if not isinstance(header_text, str) or pd.isna(header_text):
-        return None
+        return None, False
     
     clean_text = str(header_text).strip().lower()
     
     # Check exact/case-insensitive master headings
     for master in MASTER_HEADINGS:
         if master.lower() == clean_text:
-            return master
+            return master, False
             
     # Check aliases
     aliases = load_aliases()
     for master, alias_list in aliases.items():
         for alias in alias_list:
             if alias.lower() == clean_text:
-                return master
+                return master, False
     
     # Fuzzy Matching (Milestone 4)
     if use_fuzzy:
@@ -1727,74 +2047,119 @@ def find_master_match(header_text, use_fuzzy=True):
                     best_match = master
         
         if best_match:
-            # Healing Action: Add learned alias
-            # We don't save it immediately here to avoid side effects during scanning
-            # but we return the match
-            return best_match
+            return best_match, True
                 
-    return None
+    return None, False
 
 def get_column_mapping(file_input, password=None):
     """
     Analyzes the rows of the Excel file to determine column mapping.
     Scans up to Row 10 to find a valid header row.
-    Returns a tuple: (mapping_dict, header_row_index)
+    Returns a tuple: (mapping_dict, header_row_index, triggers)
     """
     excel_data = _get_excel_data(file_input, password)
-    # Read first 10 rows without header
+    # Read first 20 rows to have enough data for inference if needed
     try:
-        df_scan = pd.read_excel(excel_data, header=None, nrows=10)
+        df_scan = pd.read_excel(excel_data, header=None, nrows=20)
     except Exception as e:
         audit_logger.log_action("ERROR", details={"msg": f"Failed to read file for mapping: {e}"})
-        return {}, 0
-    
+        return {}, 0, set()
+
     num_rows = df_scan.shape[0]
     num_cols = df_scan.shape[1]
-    
+
     best_row_idx = 0
     best_mapping = {}
     max_matches = 0
-    
+    best_triggers = set()
+
     # Milestone 4: Search up to Row 10
-    for row_idx in range(num_rows):
+    scan_limit = min(num_rows, 10)
+    for row_idx in range(scan_limit):
         current_mapping = {}
         matches = 0
-        
+        current_triggers = set()
+
+        if row_idx > 1:
+            current_triggers.add("Deep Search Trigger")
+
+        # Merged Cell Unstacking (Protocol 3.3)
+        last_match = None
+
         for col_idx in range(num_cols):
             val = df_scan.iloc[row_idx, col_idx]
-            match = find_master_match(val, use_fuzzy=True)
+
+            # If empty, try unstacking from previous column in the same row
+            if pd.isna(val) or str(val).strip() == "":
+                if last_match:
+                    current_mapping[col_idx] = last_match
+                    current_triggers.add("Structural Repair Trigger (Merged Cells)")
+                    continue
+
+            match, is_fuzzy = find_master_match(val, use_fuzzy=True)
             if match:
                 current_mapping[col_idx] = match
                 matches += 1
-        
-        # Heuristic: Row 1 & 2 are special (often combined)
-        # But if we find a row with many matches, we prefer it
+                last_match = match
+
+                if is_fuzzy:
+                    current_triggers.add("Fuzzy Match Trigger")
+
+                # Log healing if fuzzy
+                original_text = str(val).strip()
+                if is_fuzzy:
+                     file_label = file_input if isinstance(file_input, str) else "stream"
+                     audit_logger.log_action("HEALING_HEADER", details={
+                         "file_source": file_label,
+                         "details": f"Healed '{original_text}' to '{match}'"
+                     })
+            else:
+                last_match = None
+
         if matches > max_matches:
             max_matches = matches
             best_mapping = current_mapping
             best_row_idx = row_idx
-            
+            best_triggers = current_triggers
+
         # Check 30% threshold for deep scan rows (as per Sanitization Protocol 3.2)
         if row_idx > 1 and num_cols > 0:
             if (matches / num_cols) >= 0.3:
-                # High confidence header row found deep in file
                 break
-                
-    # If no matches found in deep scan, try combined Row 1 & 2 logic from before
-    if max_matches == 0:
-         # Fallback to Row 1/2 combined
+
+    # Empty Header Recovery (Protocol 3.2)
+    if num_rows > best_row_idx + 1:
+        data_area = df_scan.iloc[best_row_idx + 1:]
+        for col_idx in range(num_cols):
+            if col_idx not in best_mapping:
+                inferred = infer_heading_from_data(data_area.iloc[:, col_idx])
+                if inferred:
+                    best_mapping[col_idx] = inferred
+                    best_triggers.add("Contextual Inference Trigger")
+                    file_label = file_input if isinstance(file_input, str) else "stream"
+                    audit_logger.log_action("HEALING_HEADER", details={
+                        "file_source": file_label,
+                        "details": f"Inferred header for column {col_idx} as '{inferred}' based on data pattern"
+                    })
+
+    # Structural Repair Trigger (Duplicate Columns) handled in load_and_map_data
+
+    # If no matches found in deep scan, try combined Row 1 & 2 logic as fallback
+    if max_matches == 0 and num_rows >= 2:
          for col_idx in range(num_cols):
-             r1 = df_scan.iloc[0, col_idx] if num_rows > 0 else None
-             r2 = df_scan.iloc[1, col_idx] if num_rows > 1 else None
-             
-             match = find_master_match(r1) or find_master_match(r2)
+             r1 = df_scan.iloc[0, col_idx]
+             r2 = df_scan.iloc[1, col_idx]
+
+             m1, f1 = find_master_match(r1)
+             m2, f2 = find_master_match(r2)
+             match = m1 or m2
              if match:
                  best_mapping[col_idx] = match
-         best_row_idx = 1 # Assume header area ends at Row 2
-         
-    return best_mapping, best_row_idx
+                 if f1 or f2:
+                     best_triggers.add("Fuzzy Match Trigger")
+         best_row_idx = 1
 
-CONFIG_PATH = "/home/team/shared/SCD_Dbase_Sorter/data/config/hospital_emails.csv"
+    return best_mapping, best_row_idx, best_triggers
 
 def load_hospital_config():
     """Loads hospital email and validator mapping."""
@@ -1827,30 +2192,75 @@ def _mask_string(val):
 def load_and_map_data(file_input, password=None, custom_mapping=None):
     """
     Loads data from file_input, applies mapping, and returns a normalized DataFrame.
-    
-    Args:
-        file_input: Path to the Excel file or file-like object.
-        password: Password for encrypted files.
-        custom_mapping: Optional dict {col_idx: master_heading}. If None, uses auto-detection.
     """
     if custom_mapping:
         mapping = custom_mapping
-        header_row_idx = 1 # Default assumption
+        header_row_idx = 1
+        triggers = set()
     else:
-        mapping, header_row_idx = get_column_mapping(file_input, password)
-    
+        mapping, header_row_idx, triggers = get_column_mapping(file_input, password)
+
     excel_data = _get_excel_data(file_input, password)
-    # Read the data, skipping the rows up to header_row_idx
+    # Read the data
     df = pd.read_excel(excel_data, header=None, skiprows=header_row_idx + 1)
-    
+
     # Rename columns based on mapping
     df_mapped = pd.DataFrame()
+
+    # Deduplication (Protocol 3.3): Merge columns mapping to same Master Heading
+    master_to_cols = {}
+    for col_idx, master_name in mapping.items():
+        if col_idx < df.shape[1]:
+            if master_name not in master_to_cols:
+                master_to_cols[master_name] = []
+            master_to_cols[master_name].append(df.iloc[:, col_idx])
+
+    for master_name, series_list in master_to_cols.items():
+        if len(series_list) > 1:
+            # Merge: prioritize non-null values
+            merged = series_list[0].copy()
+            for i in range(1, len(series_list)):
+                merged = merged.fillna(series_list[i])
+            df_mapped[master_name] = merged
+            
+            triggers.add("Structural Repair Trigger (Duplicate Columns)")
+            file_label = file_input if isinstance(file_input, str) else "stream"
+            audit_logger.log_action("HEALING_HEADER", details={
+                "file_source": file_label,
+                "details": f"Merged multiple columns for '{master_name}'"
+            })
+        else:
+            df_mapped[master_name] = series_list[0]
+
+    # Add default values for missing master columns
+    for master in MASTER_HEADINGS:
+        if master not in df_mapped.columns:
+            df_mapped[master] = np.nan
+
+    # Apply PII masking
+    df_mapped = mask_pii_data(df_mapped)
+
+    # Apply Sanitization
+    df_mapped = sanitize_dataframe(df_mapped)
+
+    # Set default Region if missing or null
+    if 'Region' not in df_mapped.columns:
+        df_mapped['Region'] = 'SERHA'
+    else:
+        df_mapped['Region'] = df_mapped['Region'].fillna('SERHA')
+
+    # Set default Validation_Status if missing
+    if 'Validation_Status' not in df_mapped.columns or df_mapped['Validation_Status'].isnull().all():
+        df_mapped['Validation_Status'] = 'Pending'
+
+    # Set Date_Added
+    df_mapped['Date_Added'] = pd.Timestamp.now()
     
-    # Milestone 4: Record new aliases if fuzzy matching was used
-    # We compare found headers with original aliases and save if new
-    # For simplicity, we assume if find_master_match returned something, 
-    # it's either an exact match or an alias. If it's not already in our alias list, we could save it.
-    
+    # Milestone 5: Accuracy Guardrails
+    df_mapped['Review_Required'] = len(triggers) > 0
+    df_mapped['Review_Triggers'] = ", ".join(sorted(list(triggers))) if triggers else ""
+
+    # Record new aliases
     excel_data_orig = _get_excel_data(file_input, password)
     try:
         df_header_row = pd.read_excel(excel_data_orig, header=None, skiprows=header_row_idx, nrows=1)
@@ -1858,62 +2268,43 @@ def load_and_map_data(file_input, password=None, custom_mapping=None):
             if col_idx < df_header_row.shape[1]:
                 original_header = str(df_header_row.iloc[0, col_idx]).strip()
                 if original_header and original_header.lower() != master_name.lower():
-                    save_new_alias(master_name, original_header)
-    except Exception as e:
-        print(f"Warning: Could not save new aliases: {e}")
-    
-    for col_idx, master_name in mapping.items():
-        if col_idx < df.shape[1]:
-            df_mapped[master_name] = df.iloc[:, col_idx]
-            
-    # Add default values for missing master columns
-    for master in MASTER_HEADINGS:
-        if master not in df_mapped.columns:
-            df_mapped[master] = np.nan
-            
-    # Apply PII masking
-    df_mapped = mask_pii_data(df_mapped)
+                    # Check if already an alias
+                    if original_header not in load_aliases().get(master_name, []):
+                        # ONLY save immediately if NO triggers (high confidence)
+                        if not triggers:
+                            save_new_alias(master_name, original_header)
+    except Exception:
+        pass
 
-    # Apply Sanitization
-    from sanitization import sanitize_dataframe
-    df_mapped = sanitize_dataframe(df_mapped)
-
-    # Set default Validation_Status if missing
-    if 'Validation_Status' not in df_mapped.columns or df_mapped['Validation_Status'].isnull().all():
-        df_mapped['Validation_Status'] = 'Pending'
-        
-    # Set Date_Added
-    df_mapped['Date_Added'] = pd.Timestamp.now()
-    
     file_label = file_input if isinstance(file_input, str) else "file-like-object"
-    audit_logger.log_action("LOAD_AND_MAP", details={"file": file_label, "records": len(df_mapped)})
-    
+    audit_logger.log_action("LOAD_AND_MAP", details={"file": file_label, "records": len(df_mapped), "triggers": list(triggers)})
+
     # Fill Validator_Email and Hospital_Email from config if missing
     config_df = load_hospital_config()
     if not config_df.empty and 'Hospital' in df_mapped.columns:
         # Merge to get Validator_Email and Email (which is Hospital_Email)
         df_mapped = df_mapped.merge(
-            config_df[['Hospital', 'Email', 'Validator_Email']], 
-            on='Hospital', 
-            how='left', 
+            config_df[['Hospital', 'Email', 'Validator_Email']],
+            on='Hospital',
+            how='left',
             suffixes=('', '_config')
         )
-        
+
         # Fill missing Validator_Email
         if 'Validator_Email_config' in df_mapped.columns:
             df_mapped['Validator_Email'] = df_mapped['Validator_Email'].fillna(df_mapped['Validator_Email_config'])
             df_mapped = df_mapped.drop(columns=['Validator_Email_config'])
-            
+
         # Fill missing Hospital_Email
         if 'Email' in df_mapped.columns:
             df_mapped['Hospital_Email'] = df_mapped['Hospital_Email'].fillna(df_mapped['Email'])
             df_mapped = df_mapped.drop(columns=['Email'])
-    
+
     return df_mapped
 
 ```
 
-### 7.3 /home/team/shared/SCD_Dbase_Sorter/processor/sorter.py
+### 9.3 /home/team/shared/SCD_Dbase_Sorter/processor/sorter.py
 ```python
 import pandas as pd
 import os
@@ -1924,12 +2315,12 @@ from datetime import datetime
 from encryption import encrypt_file, decrypt_file_to_memory
 from logger import audit_logger
 from hashing_service import get_master_patient_hashes, compare_hashes
-from mapping import load_and_map_data
+from mapping import load_and_map_data, MASTER_HEADINGS
 
-MASTER_DB_PATH = "/home/team/shared/SCD_Dbase_Sorter/data/master/Master_Database.xlsx"
-HOSPITALS_DIR = "/home/team/shared/SCD_Dbase_Sorter/data/hospitals/"
-STAGING_BASE_DIR = "/home/team/shared/SCD_Dbase_Sorter/data/staging"
-QUEUE_FILE = os.path.join(STAGING_BASE_DIR, "queue.json")
+try:
+    from .config import MASTER_DB_PATH, HOSPITALS_DIR, STAGING_DIR as STAGING_BASE_DIR, QUEUE_FILE
+except ImportError:
+    from config import MASTER_DB_PATH, HOSPITALS_DIR, STAGING_DIR as STAGING_BASE_DIR, QUEUE_FILE
 
 def ensure_directories():
     """Ensures necessary directories exist."""
@@ -1953,6 +2344,12 @@ def update_master_database(new_data_df):
                 master_df['Date_Added'] = pd.to_datetime(master_df['Date_Added'])
             
             combined_df = pd.concat([master_df, new_data_df], ignore_index=True)
+            
+            # Ensure Region column exists and is filled (Migration/Multi-tenancy)
+            if 'Region' not in combined_df.columns:
+                combined_df['Region'] = 'SERHA'
+            else:
+                combined_df['Region'] = combined_df['Region'].fillna('SERHA')
         except Exception as e:
             print(f"Error reading master database: {e}")
             audit_logger.log_action("ERROR", details={"msg": f"Error reading master database: {e}"})
@@ -2038,6 +2435,82 @@ def update_queue_status_local(token, filename, status, details=None):
         with open(QUEUE_FILE, 'w') as f:
             json.dump(queue, f, indent=4)
 
+def approve_and_merge_staged_file(token, filename):
+    """
+    Milestone 5: Lead Verification Queue
+    Force merges a file that was flagged for review.
+    """
+    if not os.path.exists(QUEUE_FILE):
+        return {"error": "Queue not found"}
+        
+    try:
+        with open(QUEUE_FILE, 'r') as f:
+            queue = json.load(f)
+    except Exception as e:
+        return {"error": f"Failed to read queue: {e}"}
+        
+    if token not in queue:
+        return {"error": "Token not found in queue"}
+        
+    item = next((i for i in queue[token] if i.get('filename') == filename), None)
+    if not item:
+        return {"error": "File not found in queue"}
+        
+    if item.get('status') != 'NEEDS_REVIEW':
+        return {"error": f"File is in status {item.get('status')}, cannot approve."}
+        
+    file_path = os.path.join(STAGING_BASE_DIR, token, filename)
+    if not os.path.exists(file_path):
+        return {"error": "File missing on disk"}
+        
+    try:
+        # Load and map (ignoring triggers because this is an explicit approval)
+        df = load_and_map_data(file_path)
+        
+        # De-duplication
+        master_hashes = get_master_patient_hashes()
+        if not df.empty and "Patient_ID" in df.columns:
+            is_duplicate = df["Patient_ID"].apply(lambda pid: hashlib.sha256(str(pid).strip().encode()).hexdigest() in master_hashes if pd.notna(pid) else False)
+            df = df[~is_duplicate]
+            
+        if not df.empty:
+            process_new_data(df)
+            
+            # Record approved aliases to Learning Loop (Protocol 5.3)
+            # This is partly handled in load_and_map_data, but only if no triggers.
+            # Here we can force save them because the lead approved.
+            _save_approved_aliases(file_path)
+            
+            os.remove(file_path)
+            update_queue_status_local(token, filename, "MERGED", "Lead approved and merged")
+            audit_logger.log_action("LEAD_APPROVAL", details={"file": filename, "token": token})
+            return {"status": "SUCCESS", "records": len(df)}
+        else:
+            os.remove(file_path)
+            update_queue_status_local(token, filename, "MERGED", "Lead approved (all duplicates)")
+            return {"status": "SUCCESS", "msg": "All duplicates"}
+            
+    except Exception as e:
+        return {"error": str(e)}
+
+def _save_approved_aliases(file_path):
+    """Extracts and saves aliases from an approved file."""
+    try:
+        from mapping import get_column_mapping, save_new_alias, find_master_match, load_aliases
+        mapping, header_row_idx, _ = get_column_mapping(file_path)
+        
+        import pandas as pd
+        df_header_row = pd.read_excel(file_path, header=None, skiprows=header_row_idx, nrows=1)
+        
+        for col_idx, master_name in mapping.items():
+            if col_idx < df_header_row.shape[1]:
+                original_header = str(df_header_row.iloc[0, col_idx]).strip()
+                if original_header and original_header.lower() != master_name.lower():
+                    if original_header not in load_aliases().get(master_name, []):
+                        save_new_alias(master_name, original_header)
+    except Exception:
+        pass
+
 def atomic_merge_staging_files(token):
     """
     Milestone 4: Atomic Export
@@ -2074,6 +2547,19 @@ def atomic_merge_staging_files(token):
         try:
             # 1. Load, Map, and Heal (Heal logic is inside load_and_map_data)
             df = load_and_map_data(file_path)
+            
+            # Milestone 5: Accuracy Guardrails - Check for Review Flag
+            if not df.empty and df['Review_Required'].any():
+                triggers = df['Review_Triggers'].iloc[0]
+                # Extract the column mapping used for informative review
+                cols_found = [c for c in df.columns if c in MASTER_HEADINGS]
+                mapping_str = ", ".join(cols_found)
+                detail_msg = f"Requires lead approval due to: {triggers}. Suggested columns: {mapping_str}"
+                
+                update_queue_status_local(token, filename, "NEEDS_REVIEW", detail_msg)
+                audit_logger.log_action("ACCURACY_GUARDRAIL", details={"file": filename, "status": "NEEDS_REVIEW", "triggers": triggers, "mapping": mapping_str})
+                results.append({"filename": filename, "status": "NEEDS_REVIEW", "triggers": triggers})
+                continue
             
             # Check for macros (extension-based check for logging)
             if filename.lower().endswith(('.xlsm', '.xlsb', '.docm')):
@@ -2130,7 +2616,7 @@ def process_new_data(new_data_df):
 
 ```
 
-### 7.4 /home/team/shared/SCD_Dbase_Sorter/processor/mailer.py
+### 9.4 /home/team/shared/SCD_Dbase_Sorter/processor/mailer.py
 ```python
 """
 Email automation module for SCD Dbase Sorter.
@@ -2523,12 +3009,15 @@ if __name__ == "__main__":
     print(hospitals)
 ```
 
-### 7.5 /home/team/shared/SCD_Dbase_Sorter/processor/encryption.py
+### 9.5 /home/team/shared/SCD_Dbase_Sorter/processor/encryption.py
 ```python
 import os
 from cryptography.fernet import Fernet
 
-KEY_FILE = "/home/team/shared/SCD_Dbase_Sorter/data/config/.master.key"
+try:
+    from .config import MASTER_KEY_PATH as KEY_FILE
+except ImportError:
+    from config import MASTER_KEY_PATH as KEY_FILE
 
 def ensure_key():
     """Ensures a master key exists."""
@@ -2579,15 +3068,17 @@ def decrypt_file_to_memory(file_path):
 
 ```
 
-### 7.6 /home/team/shared/SCD_Dbase_Sorter/processor/logger.py
+### 9.6 /home/team/shared/SCD_Dbase_Sorter/processor/logger.py
 ```python
 import logging
 import os
 from datetime import datetime
 import json
 
-LOG_DIR = "/home/team/shared/SCD_Dbase_Sorter/data/logs"
-AUDIT_LOG_FILE = os.path.join(LOG_DIR, "audit_log.jsonl")
+try:
+    from .config import LOGS_DIR as LOG_DIR, AUDIT_LOG_PATH as AUDIT_LOG_FILE
+except ImportError:
+    from config import LOGS_DIR as LOG_DIR, AUDIT_LOG_PATH as AUDIT_LOG_FILE
 
 class AuditLogger:
     def __init__(self):
@@ -2617,7 +3108,7 @@ audit_logger = AuditLogger()
 
 ```
 
-### 7.7 /home/team/shared/SCD_Dbase_Sorter/processor/sanitization.py
+### 9.7 /home/team/shared/SCD_Dbase_Sorter/processor/sanitization.py
 ```python
 import html
 
@@ -2653,7 +3144,7 @@ def sanitize_dataframe(df):
 
 ```
 
-### 7.8 /home/team/shared/SCD_Dbase_Sorter/processor/discovery_api.py
+### 9.8 /home/team/shared/SCD_Dbase_Sorter/processor/discovery_api.py
 ```python
 import os
 import io
@@ -2685,6 +3176,11 @@ except ImportError:
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
+try:
+    from .config import STAGING_DIR as STAGING_BASE_DIR, QUEUE_FILE
+except ImportError:
+    from config import STAGING_DIR as STAGING_BASE_DIR, QUEUE_FILE
+
 def lead_initiate_request(recipient_email, recipient_phone):
     """
     Called by the Lead Dashboard to start a discovery process.
@@ -2694,9 +3190,9 @@ def lead_initiate_request(recipient_email, recipient_phone):
     """
     token = initiate_discovery(recipient_email, recipient_phone)
     
-    # Base URL should ideally be from a config or environment variable
-    # For now we use localhost as per existing convention
-    discovery_link = f"http://localhost:3000/?token={token}"
+    # Base URL should be from a config or environment variable for permanent hosting
+    base_url = os.environ.get("BASE_URL", "http://localhost:3000")
+    discovery_link = f"{base_url.rstrip('/')}/?token={token}"
     
     # Send invitation email
     success = send_discovery_invitation(recipient_email, discovery_link)
@@ -2717,6 +3213,8 @@ def lead_bulk_initiate_request(recipients):
     Returns a list of dicts with email, token, link
     """
     results = []
+    base_url = os.environ.get("BASE_URL", "http://localhost:3000")
+    
     # Maximum 10 concurrent email sends to avoid overwhelming the SMTP server or hitting limits
     with ThreadPoolExecutor(max_workers=10) as executor:
         for rec in recipients:
@@ -2726,7 +3224,7 @@ def lead_bulk_initiate_request(recipients):
                 continue
                 
             token = initiate_discovery(email, phone)
-            discovery_link = f"http://localhost:3000/?token={token}"
+            discovery_link = f"{base_url.rstrip('/')}/?token={token}"
             
             # Queue the invitation email
             executor.submit(_send_invitation_worker, token, email, discovery_link)
@@ -2754,11 +3252,9 @@ def get_staging_queue(token):
     Retrieves the current staging queue status for a given token.
     Allows real-time UI polling of files coming from the Companion App.
     """
-    staging_dir = "/home/team/shared/SCD_Dbase_Sorter/data/staging"
-    queue_file = os.path.join(staging_dir, "queue.json")
-    if os.path.exists(queue_file):
+    if os.path.exists(QUEUE_FILE):
         try:
-            with open(queue_file, 'r') as f:
+            with open(QUEUE_FILE, 'r') as f:
                 queue = json.load(f)
                 return queue.get(token, [])
         except:
@@ -3100,7 +3596,7 @@ def get_final_discovered_df(token):
 
 ```
 
-### 7.9 /home/team/shared/SCD_Dbase_Sorter/processor/discovery_service.py
+### 9.9 /home/team/shared/SCD_Dbase_Sorter/processor/discovery_service.py
 ```python
 import os
 import json
@@ -3114,7 +3610,10 @@ try:
 except ImportError:
     from logger import audit_logger
 
-DISCOVERY_DATA_FILE = "/home/team/shared/SCD_Dbase_Sorter/data/discovery_requests.json"
+try:
+    from .config import DISCOVERY_REQUESTS_PATH as DISCOVERY_DATA_FILE
+except ImportError:
+    from config import DISCOVERY_REQUESTS_PATH as DISCOVERY_DATA_FILE
 
 def _load_requests():
     if not os.path.exists(DISCOVERY_DATA_FILE):
@@ -3210,7 +3709,7 @@ def purge_expired_requests():
 
 ```
 
-### 7.10 /home/team/shared/SCD_Dbase_Sorter/processor/staging_api.py
+### 9.10 /home/team/shared/SCD_Dbase_Sorter/processor/staging_api.py
 ```python
 import os
 import json
@@ -3227,8 +3726,10 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
     return response
 
-STAGING_BASE_DIR = "/home/team/shared/SCD_Dbase_Sorter/data/staging"
-QUEUE_FILE = os.path.join(STAGING_BASE_DIR, "queue.json")
+try:
+    from .config import STAGING_DIR as STAGING_BASE_DIR, QUEUE_FILE
+except ImportError:
+    from config import STAGING_DIR as STAGING_BASE_DIR, QUEUE_FILE
 
 def update_queue_status(token, filename, status, details=None):
     os.makedirs(STAGING_BASE_DIR, exist_ok=True)
@@ -3354,7 +3855,7 @@ if __name__ == '__main__':
 
 ```
 
-### 7.11 /home/team/shared/SCD_Dbase_Sorter/processor/search_bot.py
+### 9.11 /home/team/shared/SCD_Dbase_Sorter/processor/search_bot.py
 ```python
 """
 Search Bot Logic for External SCD Data Discovery.
@@ -3488,7 +3989,7 @@ class SearchBot:
                         # Attempt to map columns
                         mapped_cols = {}
                         for i, col in enumerate(df.columns):
-                            match = find_master_match(col)
+                            match, _ = find_master_match(col)
                             if match:
                                 mapped_cols[col] = match
                         if mapped_cols:
@@ -3522,7 +4023,7 @@ class SearchBot:
 
 ```
 
-### 7.12 /home/team/shared/SCD_Dbase_Sorter/processor/word_processor.py
+### 9.12 /home/team/shared/SCD_Dbase_Sorter/processor/word_processor.py
 ```python
 import docx
 import pandas as pd
@@ -3553,7 +4054,7 @@ def process_word_file(file_path):
         header_row = [cell.text.strip() for cell in table.rows[0].cells]
         mapping = {}
         for i, text in enumerate(header_row):
-            match = find_master_match(text)
+            match, _ = find_master_match(text)
             if match:
                 mapping[i] = match
         
@@ -3561,7 +4062,7 @@ def process_word_file(file_path):
         if not mapping and len(table.rows) > 2:
             header_row = [cell.text.strip() for cell in table.rows[1].cells]
             for i, text in enumerate(header_row):
-                match = find_master_match(text)
+                match, _ = find_master_match(text)
                 if match:
                     mapping[i] = match
                     
@@ -3599,7 +4100,7 @@ def scan_text_for_keywords(file_path, keywords=None):
 
 ```
 
-### 7.13 /home/team/shared/SCD_Dbase_Sorter/processor/payments.py
+### 9.13 /home/team/shared/SCD_Dbase_Sorter/processor/payments.py
 ```python
 import streamlit as st
 import streamlit.components.v1 as components
@@ -3651,7 +4152,7 @@ def render_paypal_button(client_id, amount="99.00", item_name="SCD Dbase Sorter 
 
 ```
 
-### 7.14 /home/team/shared/SCD_Dbase_Sorter/companion/scanner.py
+### 9.14 /home/team/shared/SCD_Dbase_Sorter/companion/scanner.py
 ```python
 import os
 import sys

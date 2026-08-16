@@ -16,6 +16,12 @@ import io
 # Add processor directory to path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "processor"))
 
+try:
+    import flask
+    print(f"Flask found at: {flask.__file__}")
+except ImportError:
+    print("Flask NOT found in main app.py")
+
 # Import team modules
 from mapping import (
     load_and_map_data, 
@@ -66,6 +72,8 @@ try:
         st.session_state.staging_api_started = True
         audit_logger.log_action("STAGING_API_STARTED_BACKGROUND", details={"port": 5000})
 except (ImportError, Exception) as e:
+    import traceback
+    traceback.print_exc()
     st.error(f"Could not load Staging API: {e}. Companion App features may be disabled.")
 # --------------------------------------
 
@@ -100,8 +108,108 @@ def check_system_health():
     return is_healthy, warnings
 
 # ──────────────────────────────────────────────
+# Authorization & Security
+# ──────────────────────────────────────────────
+# Master DB Password Store (simple hashed passwords for authorization)
+MASTER_DB_PASSWORD_HASH = "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"  # sha256("admin")
+NATIONAL_VIEWER_PASSWORD_HASH = "b176c94eb4cd6f378b6757f1c971b643469dd80f98eca1a278273ccf57ce4c31" # sha256("national-view-2026")
+
+import hashlib
+
+def verify_master_db_password(password):
+    """Verifies the Master Database password for Admin role."""
+    return hashlib.sha256(password.encode()).hexdigest() == MASTER_DB_PASSWORD_HASH
+
+def verify_national_viewer_password(password):
+    """Verifies the National Viewer password for View-Only role."""
+    return hashlib.sha256(password.encode()).hexdigest() == NATIONAL_VIEWER_PASSWORD_HASH
+
+ENTITIES = [
+    {"name": "SERHA", "full_name": "South East Regional Health Authority", "role": "admin", "type": "Clinical Lead"},
+    {"name": "SRHA", "full_name": "Southern Regional Health Authority", "role": "admin", "type": "Clinical Lead"},
+    {"name": "NERHA", "full_name": "North East Regional Health Authority", "role": "admin", "type": "Clinical Lead"},
+    {"name": "WRHA", "full_name": "Western Regional Health Authority", "role": "admin", "type": "Clinical Lead"},
+    {"name": "UWI", "full_name": "Sickle Cell Unit, University Hospital of the West Indies", "role": "admin", "type": "Clinical Lead"},
+    {"name": "MoHW", "full_name": "Family Health Unit, Ministry of Health & Wellness", "role": "viewer", "type": "Oversight/View-Only"}
+]
+
+def render_portal_landing():
+    """Redesigns the landing page to feature a professional Portal Entry Table."""
+    st.title("🏥 SCD Global Data Portal")
+    st.markdown("### Authorized Entity Access")
+    st.markdown("Welcome to the **SCD Dbase Sorter**. Please select your organization to sign in.")
+    
+    # Professional Portal Table UI
+    st.markdown("---")
+    
+    # Table Header
+    h_col1, h_col2, h_col3 = st.columns([3, 2, 1])
+    with h_col1: st.markdown("**Authorized Clinical Entity**")
+    with h_col2: st.markdown("**Access Role / Type**")
+    with h_col3: st.markdown("**Action**")
+    st.markdown("---")
+    
+    for entity in ENTITIES:
+        col1, col2, col3 = st.columns([3, 2, 1])
+        with col1:
+            st.write(f"**{entity['full_name']}**")
+        with col2:
+            st.write(entity['type'])
+        with col3:
+            if st.button("Sign In", key=f"portal_signin_{entity['name']}", use_container_width=True):
+                st.session_state.signing_in_entity = entity
+                st.rerun()
+        st.divider()
+
+    # Sign-In Prompt (Overlay/Dialog style)
+    if st.session_state.signing_in_entity:
+        entity = st.session_state.signing_in_entity
+        st.markdown(f"### 🔐 Authorization Required: {entity['name']}")
+        st.info(f"You are signing in as an authorized representative of **{entity['full_name']}**.")
+        
+        auth_password = st.text_input(
+            "Enter Security Password",
+            type="password",
+            key="portal_password_input",
+            help=f"Enter the password assigned to {entity['name']}."
+        )
+        
+        btn_col1, btn_col2 = st.columns([1, 4])
+        with btn_col1:
+            if st.button("Verify", type="primary", use_container_width=True):
+                success = False
+                if entity['role'] == "admin":
+                    if verify_master_db_password(auth_password):
+                        st.session_state.user_role = "admin"
+                        success = True
+                else: # viewer
+                    if verify_national_viewer_password(auth_password):
+                        st.session_state.user_role = "viewer"
+                        success = True
+                
+                if success:
+                    st.session_state.user_entity = entity['name']
+                    st.session_state.discovery_authorized = (entity['role'] == "admin")
+                    st.session_state.signing_in_entity = None
+                    audit_logger.log_action("ENTITY_PORTAL_LOGIN", details={"entity": entity['name'], "role": entity['role']})
+                    st.success("Authorization successful! Loading dashboard...")
+                    st.rerun()
+                else:
+                    st.error("❌ Invalid password for the selected entity.")
+        with btn_col2:
+            if st.button("Cancel", use_container_width=True):
+                st.session_state.signing_in_entity = None
+                st.rerun()
+
+# ──────────────────────────────────────────────
 # Session State Initialization
 # ──────────────────────────────────────────────
+if "user_role" not in st.session_state:
+    st.session_state.user_role = None
+if "user_entity" not in st.session_state:
+    st.session_state.user_entity = None
+if "signing_in_entity" not in st.session_state:
+    st.session_state.signing_in_entity = None
 if "processed_data" not in st.session_state:
     st.session_state.processed_data = None
 if "master_df" not in st.session_state:
@@ -125,6 +233,25 @@ if "final_discovered_df" not in st.session_state:
 # Sidebar: Configuration & Info
 # ──────────────────────────────────────────────
 st.sidebar.title("🔧 SCD Dbase Sorter")
+
+if st.session_state.user_role == "viewer":
+    st.sidebar.warning("👁️ National Oversight Mode")
+    st.sidebar.info(f"**Entity:** {st.session_state.user_entity}")
+    st.sidebar.caption("View-Only Access Enabled")
+elif st.session_state.user_role == "admin":
+    st.sidebar.success("🛡️ Admin Mode")
+    st.sidebar.info(f"**Entity:** {st.session_state.user_entity}")
+    st.sidebar.caption("Full Access Enabled")
+else:
+    st.sidebar.info("🔒 Restricted Mode")
+    st.sidebar.caption("Please select entity in Dashboard")
+
+if st.session_state.user_role:
+    if st.sidebar.button("🔓 Logout", use_container_width=True):
+        st.session_state.user_role = None
+        st.session_state.user_entity = None
+        st.session_state.discovery_authorized = False
+        st.rerun()
 
 # Health Check Status
 healthy, msgs = check_system_health()
@@ -152,7 +279,7 @@ smtp_pass = st.sidebar.text_input("SMTP Password", type="password", value="")
 smtp_from = st.sidebar.text_input("From Email", value="scd.database@example.com")
 smtp_from_name = st.sidebar.text_input("From Name", value="SCD Database System")
 
-if st.sidebar.button("Save SMTP Settings"):
+if st.sidebar.button("Save SMTP Settings", disabled=st.session_state.user_role != "admin"):
     configure_smtp(
         host=smtp_host,
         port=int(smtp_port),
@@ -294,7 +421,18 @@ st.sidebar.caption("SCD Dbase Sorter v1.1")
 # ──────────────────────────────────────────────
 # Main Dashboard Content
 # ──────────────────────────────────────────────
+# Redesign landing page to feature Portal Entry Table if not authorized
+if st.session_state.user_role is None and discovery_mode != "📥 Recipient Portal":
+    render_portal_landing()
+    st.stop() # Force user to use portal for Dashboard and Discovery tasks
+
 st.title("📊 SCD Dbase Sorter Dashboard")
+
+if st.session_state.user_role == "viewer":
+    st.warning("👁️ **National Oversight Mode (View-Only)**")
+elif st.session_state.user_role == "admin":
+    st.success("🛡️ **Admin Mode Active**")
+
 st.markdown("Upload Excel data, process & sort, then validate and email.")
 
 # ====== STEP 1: File Upload ======
@@ -417,7 +555,8 @@ if uploaded_file is not None:
                 if selected != "None":
                     user_mapping[i] = selected
 
-        if st.button("🎓 Confirm & Teach System", type="secondary"):
+        teach_disabled = st.session_state.user_role != "admin"
+        if st.button("🎓 Confirm & Teach System", type="secondary", disabled=teach_disabled):
             # Update aliases for anything changed or newly mapped
             for col_idx, master in user_mapping.items():
                 h1 = df_headers.iloc[0, col_idx]
@@ -439,7 +578,11 @@ if uploaded_file is not None:
     # ====== STEP 2: Process & Sort ======
     st.header("Step 2: Process & Sort Data")
     
-    process_disabled = not st.session_state.mapping_confirmed
+    # Process is disabled if mapping not confirmed OR user is view-only
+    process_disabled = not st.session_state.mapping_confirmed or st.session_state.user_role != "admin"
+    
+    if st.session_state.user_role == "viewer":
+        st.warning("⚠️ Process & Sort is disabled in National Oversight Mode.")
 
     if st.button("🚀 Process & Sort", type="primary", use_container_width=True, disabled=process_disabled):
         with st.spinner("Processing and sorting data... This may take a moment."):
@@ -595,8 +738,10 @@ if st.session_state.processing_complete and st.session_state.master_df is not No
         
         # Option to email all hospitals at once
         col_bulk1, col_bulk2 = st.columns(2)
+        bulk_disabled = st.session_state.user_role != "admin"
+        
         with col_bulk1:
-            if st.button("📨 Send Validation Requests (All Hospitals)", use_container_width=True):
+            if st.button("📨 Send Validation Requests (All Hospitals)", use_container_width=True, disabled=bulk_disabled):
                 with st.spinner("Sending validation requests..."):
                     results = {}
                     for hospital in hospitals_list:
@@ -619,7 +764,7 @@ if st.session_state.processing_complete and st.session_state.master_df is not No
                     )
         
         with col_bulk2:
-            if st.button("📨 Send Finalized Data (All Hospitals)", use_container_width=True):
+            if st.button("📨 Send Finalized Data (All Hospitals)", use_container_width=True, disabled=bulk_disabled):
                 with st.spinner("Sending finalized data to hospitals..."):
                     results = {}
                     for hospital in hospitals_list:
@@ -662,7 +807,7 @@ if st.session_state.processing_complete and st.session_state.master_df is not No
             valid_email = get_validator_email(selected_hosp) if selected_hosp else "N/A"
             st.info(f"**Validator Email:** {valid_email or 'Not configured'}")
         
-        if st.button("📤 Send Now", type="primary"):
+        if st.button("📤 Send Now", type="primary", disabled=bulk_disabled):
             if selected_hosp and not pd.isna(selected_hosp):
                 hosp_data = master_df[master_df["Hospital"] == selected_hosp]
                 safe_name = str(selected_hosp).strip().replace(" ", "_")
@@ -695,7 +840,7 @@ else:
                     hospitals_list = existing_df["Hospital"].dropna().unique()
                     selected_hosp = st.selectbox("Select Hospital:", sorted(hospitals_list))
                     
-                    if st.button("📤 Send Validation Request"):
+                    if st.button("📤 Send Validation Request", disabled=bulk_disabled):
                         hosp_data = existing_df[existing_df["Hospital"] == selected_hosp]
                         safe_name = str(selected_hosp).strip().replace(" ", "_")
                         temp_attach = os.path.join(tempfile.gettempdir(), f"{safe_name}_data.xlsx")
@@ -717,13 +862,6 @@ from discovery_api import lead_initiate_request, get_final_discovered_df
 from discovery_service import get_discovery_request, update_discovery_status, _load_requests
 import hashlib
 import datetime
-
-# Master DB Password Store (simple hashed password for authorization)
-MASTER_DB_PASSWORD_HASH = "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"  # sha256("admin")
-
-def verify_master_db_password(password):
-    """Verifies the Master Database password."""
-    return hashlib.sha256(password.encode()).hexdigest() == MASTER_DB_PASSWORD_HASH
 
 # Session state for password authorization
 if "discovery_authorized" not in st.session_state:
@@ -751,7 +889,9 @@ if discovery_mode == "🔍 Discovery Initiation":
                     with col_ph:
                         r_phone = st.text_input("Mobile *", placeholder="5551234567", key="sgl_phone")
                     st.caption("* Required")
-                    if st.form_submit_button("📤 Send Discovery Request", type="primary", use_container_width=True):
+                    # Gated for admin only
+                    disc_init_disabled = st.session_state.user_role != "admin"
+                    if st.form_submit_button("📤 Send Discovery Request", type="primary", use_container_width=True, disabled=disc_init_disabled):
                         errors = []
                         if not r_email or "@" not in r_email:
                             errors.append("Valid email required.")
@@ -792,7 +932,7 @@ if discovery_mode == "🔍 Discovery Initiation":
         with col_bph:
             st.caption("Will be prepended to all phone numbers without a leading '+'")
         
-        if st.button("📤 Send Bulk Discovery Requests", type="primary", use_container_width=True):
+        if st.button("📤 Send Bulk Discovery Requests", type="primary", use_container_width=True, disabled=disc_init_disabled):
             if not bulk_text.strip():
                 st.error("Please enter at least one recipient.")
             else:
@@ -845,7 +985,7 @@ if discovery_mode == "🔍 Discovery Initiation":
                     valid = csv_df.dropna(subset=['email'])
                     st.info(f"📊 Found {len(valid)} valid recipients in CSV.")
                     
-                    if st.button("📤 Send From CSV", type="primary", use_container_width=True):
+                    if st.button("📤 Send From CSV", type="primary", use_container_width=True, disabled=disc_init_disabled):
                         recipients = []
                         for _, row in valid.iterrows():
                             phone = str(row['phone']).strip()
@@ -973,13 +1113,13 @@ elif discovery_mode == "📋 Request Tracking":
             # Expand/collapse controls
             col_revoke, col_purge = st.columns(2)
             with col_revoke:
-                if st.button("🔴 Revoke Token", type="secondary", use_container_width=True):
+                if st.button("🔴 Revoke Token", type="secondary", use_container_width=True, disabled=disc_init_disabled):
                     from discovery_service import revoke_discovery_token
                     revoke_discovery_token(full_token)
                     st.success(f"Token {token_select} revoked.")
                     st.rerun()
             with col_purge:
-                if st.button("🧹 Purge Expired Tokens", use_container_width=True):
+                if st.button("🧹 Purge Expired Tokens", use_container_width=True, disabled=disc_init_disabled):
                     purge_expired_requests()
                     st.success("Expired tokens purged.")
                     st.rerun()
@@ -1166,31 +1306,76 @@ else:
         
         st.markdown("---")
         
-        # Step C: Password Authorization Gate
-        st.subheader("🔐 Master Database Password — Authorization Required")
+        # Step B.5: Lead Verification Queue (Suggested Healing)
+        st.subheader("⚖️ Lead Verification Queue (Suggested Healing)")
+        st.markdown("The following files were flagged for review due to automated healing triggers.")
         
-        if not st.session_state.discovery_authorized:
-            st.warning("⚠️ Append/Update operations require Master Database password authorization.")
-            
-            disc_password = st.text_input(
-                "Enter Master Database Password",
-                type="password",
-                key="discovery_db_password_dash",
-                help="Enter the authorized Master Database password to enable write operations.",
-            )
-            
-            if st.button("🔑 Authorize", type="primary", use_container_width=True):
-                if verify_master_db_password(disc_password):
-                    st.session_state.discovery_authorized = True
-                    st.rerun()
-                    audit_logger.log_action("DISCOVERY_AUTHORIZED", details={})
-                else:
-                    st.error("❌ Incorrect Master Database Password. Access denied.")
+        needs_review_items = []
+        # Re-load requests to ensure we have latest status
+        current_reqs = _load_requests()
+        for tkn, req_data in current_reqs.items():
+            # Check staged files for this token
+            items = req_data.get('email_results', []) + req_data.get('local_results', [])
+            for itm in items:
+                if itm.get('status') == 'NEEDS_REVIEW':
+                    needs_review_items.append({
+                        "token": tkn,
+                        "filename": itm.get('filename'),
+                        "recipient": req_data.get('recipient_email', 'N/A'),
+                        "trigger": itm.get('details', 'Healed/Fuzzy Match')
+                    })
+        
+        if needs_review_items:
+            for idx, item in enumerate(needs_review_items):
+                with st.expander(f"Review: {item['filename']} (from {item['recipient']})", expanded=True):
+                    st.warning(f"**Trigger:** {item['trigger']}")
+                    st.info("System suggested a mapping based on fuzzy matching or contextual inference.")
+                    
+                    col_app, col_rej = st.columns(2)
+                    with col_app:
+                        # Disable for non-admins
+                        app_disabled = st.session_state.user_role != "admin"
+                        if st.button(f"✅ Approve & Merge", key=f"app_{idx}", disabled=app_disabled):
+                            from sorter import approve_and_merge_staged_file
+                            res = approve_and_merge_staged_file(item['token'], item['filename'])
+                            if "error" in res:
+                                st.error(res["error"])
+                            else:
+                                st.success(f"Merged {res.get('records', 0)} records!")
+                                st.rerun()
+                    with col_rej:
+                        if st.button(f"❌ Reject & Purge", key=f"rej_{idx}", disabled=app_disabled):
+                            st.info("Purging staged file...")
+                            try:
+                                from sorter import update_queue_status_local
+                                import os
+                                staging_p = os.path.join("/home/team/shared/SCD_Dbase_Sorter/data/staging", item['token'], item['filename'])
+                                if os.path.exists(staging_p): os.remove(staging_p)
+                                update_queue_status_local(item['token'], item['filename'], "REJECTED", "Lead rejected mapping")
+                                st.success("Purged.")
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Purge failed: {e}")
         else:
-            st.success("✅ **Authorized.** Write operations are enabled for this session.")
-            if st.button("🔓 Revoke Access & Lock", use_container_width=True):
-                st.session_state.discovery_authorized = False
-                st.rerun()
+            st.success("✅ No items currently require verification.")
+        
+        st.markdown("---")
+        
+        # Step C: Authorization Status
+        st.subheader("🔐 System Authorization Status")
+        
+        if st.session_state.user_role == "viewer":
+            st.warning(f"👁️ **National Oversight Mode (View-Only)** - Entity: **{st.session_state.user_entity}**")
+            st.info("You can view all data and metrics, but write operations are disabled.")
+        elif st.session_state.user_role == "admin":
+            st.success(f"🛡️ **Admin Mode Active** - Entity: **{st.session_state.user_entity}**")
+            st.info("Full access to append, merge, and update records.")
+
+        if st.button("🔓 Logout & Lock Session", use_container_width=True):
+            st.session_state.user_role = None
+            st.session_state.user_entity = None
+            st.session_state.discovery_authorized = False
+            st.rerun()
         
         st.markdown("---")
         
@@ -1281,17 +1466,22 @@ else:
     # Real Queue Loading
     def load_real_queue():
         all_reqs = _load_requests()
-        all_staged = []
+        all_items = []
         for token, req in all_reqs.items():
             staged = get_staging_queue(token)
             for item in staged:
-                if item.get("status") == "STAGED":
+                if item.get("status") in ["STAGED", "NEEDS_REVIEW"]:
                     item["token"] = token
                     item["recipient"] = req.get("recipient_email", "Unknown")
-                    # Map shield based on some properties if available, else default to green
-                    item["shield"] = "🟢" if "error" not in item else "🔴"
-                    all_staged.append(item)
-        return all_staged
+                    # Map shield based on status
+                    if item.get("status") == "NEEDS_REVIEW":
+                        item["shield"] = "🟡"
+                    elif "error" in item:
+                        item["shield"] = "🔴"
+                    else:
+                        item["shield"] = "🟢"
+                    all_items.append(item)
+        return all_items
 
     if "sync_box_exporting" not in st.session_state:
         st.session_state.sync_box_exporting = False
@@ -1305,34 +1495,50 @@ else:
             if not staged_files:
                 st.info("📭 No files currently in the live export queue.")
             else:
-                # Full queue display
+                # Summary metrics
                 total_records = sum(int(f.get("records", 0)) for f in staged_files)
                 healthy = sum(1 for f in staged_files if f.get("shield") == "🟢")
+                review = sum(1 for f in staged_files if f.get("shield") == "🟡")
                 blocked = sum(1 for f in staged_files if f.get("shield") == "🔴")
                 
                 col_b1, col_b2, col_b3, col_b4 = st.columns(4)
                 with col_b1: st.metric("📦 Files", len(staged_files))
                 with col_b2: st.metric("📊 Records", total_records)
-                with col_b3: st.metric("🟢 Healthy", healthy)
+                with col_b3: st.metric("🟢 Ready / 🟡 Review", f"{healthy} / {review}")
                 with col_b4: st.metric("🔴 Blocked", blocked)
                 
                 # File cards with shield icons
                 for f in staged_files:
                     cols = st.columns([1, 3, 1, 1, 2])
                     with cols[0]: st.markdown(f"**{f['shield']}**")
-                    with cols[1]: st.markdown(f"**{f['filename']}**\n\n*(From: {f['recipient']})*")
+                    with cols[1]: 
+                        st.markdown(f"**{f['filename']}**\n\n*(From: {f['recipient']})*")
+                        if f.get('status') == 'NEEDS_REVIEW':
+                            st.caption(f"⚠️ {f.get('details', 'Review required')}")
                     with cols[2]: st.markdown(f"_{f.get('records', '?')}_ recs")
                     with cols[3]: st.markdown(f"_{f.get('size', '?')}_")
                     with cols[4]:
                         status = f.get("status", "STAGED")
                         if status == "STAGED":
                             st.markdown("🟢 Ready")
+                        elif status == "NEEDS_REVIEW":
+                            if st.button("✅ Approve", key=f"appr_{f['token']}_{f['filename']}", type="primary", disabled=st.session_state.user_role != "admin"):
+                                if not st.session_state.discovery_authorized:
+                                    st.warning("🔐 Authorize first!")
+                                else:
+                                    from sorter import approve_and_merge_staged_file
+                                    res = approve_and_merge_staged_file(f['token'], f['filename'])
+                                    if "error" in res:
+                                        st.error(res['error'])
+                                    else:
+                                        st.success(f"Merged {res.get('records', 0)} records")
+                                        st.rerun()
                         else:
                             st.markdown(f"⚪ {status}")
                     st.divider()
                 
                 # Export button
-                export_disabled = not st.session_state.discovery_authorized
+                export_disabled = st.session_state.user_role != "admin"
                 if st.button("🚀 Start Atomic Export to Database", type="primary", use_container_width=True, disabled=export_disabled):
                     if not st.session_state.discovery_authorized:
                         st.warning("🔐 Please authorize via the Master Database Password above.")
@@ -1461,7 +1667,7 @@ else:
                     with col_fsize:
                         st.info(f"**Size:** {len(discovered_file.getvalue()) / 1024:.1f} KB")
                     
-                    if st.button("📤 Submit Discovery Files", type="primary", use_container_width=True):
+                    if st.button("📤 Submit Discovery Files", type="primary", use_container_width=True, disabled=st.session_state.user_role != "admin"):
                         with st.spinner("Processing..."):
                             try:
                                 with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(discovered_file.name)[1]) as tmp:

@@ -130,7 +130,7 @@ class SearchBot:
                         # Attempt to map columns
                         mapped_cols = {}
                         for i, col in enumerate(df.columns):
-                            match = find_master_match(col)
+                            match, _ = find_master_match(col)
                             if match:
                                 mapped_cols[col] = match
                         if mapped_cols:
