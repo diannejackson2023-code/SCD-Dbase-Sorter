@@ -16,7 +16,13 @@ The SCD Dbase Sorter is an automated system designed to manage and sort medical 
 ### 2.2. Data Processing Engine
 - **Technology**: Python with `pandas` and `openpyxl`.
 - **Functions**:
-    - **Header Mapping**: Logic to identify columns even if headers are in Row 1, Row 2, or split across both.
+    - **Structural Healing (Milestone 4/5)**:
+    - **Fuzzy Matching**: Automated repair of misspelled headers using Levenshtein distance.
+    - **Deep Scan**: Search up to Row 10 for valid headers.
+    - **Contextual Inference**: Using data patterns (Regex) to identify columns without headers.
+- **Strict Accuracy Guardrails (Suggested Healing)**:
+    - **Mandatory Review**: Any record "healed" via high-risk logic is diverted to a human Lead Verification Queue.
+    - **Learning Loop**: Verified healing actions are saved to the Knowledge Base (`aliases.json`) for future automation.
     - **Normalization**: Standardizing hospital names and year formats.
     - **Distribution**: Splitting master data into individual hospital records.
 

@@ -7,7 +7,7 @@ from datetime import datetime
 from encryption import encrypt_file, decrypt_file_to_memory
 from logger import audit_logger
 from hashing_service import get_master_patient_hashes, compare_hashes
-from mapping import load_and_map_data
+from mapping import load_and_map_data, MASTER_HEADINGS
 
 try:
     from .config import MASTER_DB_PATH, HOSPITALS_DIR, STAGING_DIR as STAGING_BASE_DIR, QUEUE_FILE
@@ -36,6 +36,12 @@ def update_master_database(new_data_df):
                 master_df['Date_Added'] = pd.to_datetime(master_df['Date_Added'])
             
             combined_df = pd.concat([master_df, new_data_df], ignore_index=True)
+            
+            # Ensure Region column exists and is filled (Migration/Multi-tenancy)
+            if 'Region' not in combined_df.columns:
+                combined_df['Region'] = 'SERHA'
+            else:
+                combined_df['Region'] = combined_df['Region'].fillna('SERHA')
         except Exception as e:
             print(f"Error reading master database: {e}")
             audit_logger.log_action("ERROR", details={"msg": f"Error reading master database: {e}"})
@@ -121,6 +127,82 @@ def update_queue_status_local(token, filename, status, details=None):
         with open(QUEUE_FILE, 'w') as f:
             json.dump(queue, f, indent=4)
 
+def approve_and_merge_staged_file(token, filename):
+    """
+    Milestone 5: Lead Verification Queue
+    Force merges a file that was flagged for review.
+    """
+    if not os.path.exists(QUEUE_FILE):
+        return {"error": "Queue not found"}
+        
+    try:
+        with open(QUEUE_FILE, 'r') as f:
+            queue = json.load(f)
+    except Exception as e:
+        return {"error": f"Failed to read queue: {e}"}
+        
+    if token not in queue:
+        return {"error": "Token not found in queue"}
+        
+    item = next((i for i in queue[token] if i.get('filename') == filename), None)
+    if not item:
+        return {"error": "File not found in queue"}
+        
+    if item.get('status') != 'NEEDS_REVIEW':
+        return {"error": f"File is in status {item.get('status')}, cannot approve."}
+        
+    file_path = os.path.join(STAGING_BASE_DIR, token, filename)
+    if not os.path.exists(file_path):
+        return {"error": "File missing on disk"}
+        
+    try:
+        # Load and map (ignoring triggers because this is an explicit approval)
+        df = load_and_map_data(file_path)
+        
+        # De-duplication
+        master_hashes = get_master_patient_hashes()
+        if not df.empty and "Patient_ID" in df.columns:
+            is_duplicate = df["Patient_ID"].apply(lambda pid: hashlib.sha256(str(pid).strip().encode()).hexdigest() in master_hashes if pd.notna(pid) else False)
+            df = df[~is_duplicate]
+            
+        if not df.empty:
+            process_new_data(df)
+            
+            # Record approved aliases to Learning Loop (Protocol 5.3)
+            # This is partly handled in load_and_map_data, but only if no triggers.
+            # Here we can force save them because the lead approved.
+            _save_approved_aliases(file_path)
+            
+            os.remove(file_path)
+            update_queue_status_local(token, filename, "MERGED", "Lead approved and merged")
+            audit_logger.log_action("LEAD_APPROVAL", details={"file": filename, "token": token})
+            return {"status": "SUCCESS", "records": len(df)}
+        else:
+            os.remove(file_path)
+            update_queue_status_local(token, filename, "MERGED", "Lead approved (all duplicates)")
+            return {"status": "SUCCESS", "msg": "All duplicates"}
+            
+    except Exception as e:
+        return {"error": str(e)}
+
+def _save_approved_aliases(file_path):
+    """Extracts and saves aliases from an approved file."""
+    try:
+        from mapping import get_column_mapping, save_new_alias, find_master_match, load_aliases
+        mapping, header_row_idx, _ = get_column_mapping(file_path)
+        
+        import pandas as pd
+        df_header_row = pd.read_excel(file_path, header=None, skiprows=header_row_idx, nrows=1)
+        
+        for col_idx, master_name in mapping.items():
+            if col_idx < df_header_row.shape[1]:
+                original_header = str(df_header_row.iloc[0, col_idx]).strip()
+                if original_header and original_header.lower() != master_name.lower():
+                    if original_header not in load_aliases().get(master_name, []):
+                        save_new_alias(master_name, original_header)
+    except Exception:
+        pass
+
 def atomic_merge_staging_files(token):
     """
     Milestone 4: Atomic Export
@@ -157,6 +239,19 @@ def atomic_merge_staging_files(token):
         try:
             # 1. Load, Map, and Heal (Heal logic is inside load_and_map_data)
             df = load_and_map_data(file_path)
+            
+            # Milestone 5: Accuracy Guardrails - Check for Review Flag
+            if not df.empty and df['Review_Required'].any():
+                triggers = df['Review_Triggers'].iloc[0]
+                # Extract the column mapping used for informative review
+                cols_found = [c for c in df.columns if c in MASTER_HEADINGS]
+                mapping_str = ", ".join(cols_found)
+                detail_msg = f"Requires lead approval due to: {triggers}. Suggested columns: {mapping_str}"
+                
+                update_queue_status_local(token, filename, "NEEDS_REVIEW", detail_msg)
+                audit_logger.log_action("ACCURACY_GUARDRAIL", details={"file": filename, "status": "NEEDS_REVIEW", "triggers": triggers, "mapping": mapping_str})
+                results.append({"filename": filename, "status": "NEEDS_REVIEW", "triggers": triggers})
+                continue
             
             # Check for macros (extension-based check for logging)
             if filename.lower().endswith(('.xlsm', '.xlsb', '.docm')):

@@ -27,7 +27,7 @@ def process_word_file(file_path):
         header_row = [cell.text.strip() for cell in table.rows[0].cells]
         mapping = {}
         for i, text in enumerate(header_row):
-            match = find_master_match(text)
+            match, _ = find_master_match(text)
             if match:
                 mapping[i] = match
         
@@ -35,7 +35,7 @@ def process_word_file(file_path):
         if not mapping and len(table.rows) > 2:
             header_row = [cell.text.strip() for cell in table.rows[1].cells]
             for i, text in enumerate(header_row):
-                match = find_master_match(text)
+                match, _ = find_master_match(text)
                 if match:
                     mapping[i] = match
                     

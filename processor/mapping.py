@@ -11,7 +11,7 @@ from logger import audit_logger
 
 # Standard Master Headings
 MASTER_HEADINGS = [
-    "Patient_ID", "Patient_Name", "Hospital", "Year", "Validation_Status", 
+    "Patient_ID", "Patient_Name", "Hospital", "Region", "Year", "Validation_Status", 
     "Validator_Email", "Hospital_Email", "Date_Added", "Treatment", "Outcome"
 ]
 
@@ -56,6 +56,7 @@ def load_aliases():
         "Year": ["Yr", "Data_Year", "Period", "Year of Data"],
         "Patient_ID": ["Pt_No", "Patient ID", "ID", "Case_No", "Patient_ID"],
         "Patient_Name": ["Name", "Patient Name", "Full Name", "Pt Name"],
+        "Region": ["Zone", "Area", "County", "District", "Province", "Regional"],
         "Treatment": ["Rx", "Therapy", "Treatment"],
         "Outcome": ["Result", "Status", "Outcome"]
     }
@@ -113,23 +114,26 @@ def levenshtein_distance(s1, s2):
     return previous_row[-1]
 
 def find_master_match(header_text, use_fuzzy=True):
-    """Checks if header_text matches any master heading or alias."""
+    """
+    Checks if header_text matches any master heading or alias.
+    Returns (match_name, is_fuzzy)
+    """
     if not isinstance(header_text, str) or pd.isna(header_text):
-        return None
+        return None, False
     
     clean_text = str(header_text).strip().lower()
     
     # Check exact/case-insensitive master headings
     for master in MASTER_HEADINGS:
         if master.lower() == clean_text:
-            return master
+            return master, False
             
     # Check aliases
     aliases = load_aliases()
     for master, alias_list in aliases.items():
         for alias in alias_list:
             if alias.lower() == clean_text:
-                return master
+                return master, False
     
     # Fuzzy Matching (Milestone 4)
     if use_fuzzy:
@@ -152,18 +156,15 @@ def find_master_match(header_text, use_fuzzy=True):
                     best_match = master
         
         if best_match:
-            # Healing Action: Add learned alias
-            # We don't save it immediately here to avoid side effects during scanning
-            # but we return the match
-            return best_match
+            return best_match, True
                 
-    return None
+    return None, False
 
 def get_column_mapping(file_input, password=None):
     """
     Analyzes the rows of the Excel file to determine column mapping.
     Scans up to Row 10 to find a valid header row.
-    Returns a tuple: (mapping_dict, header_row_index)
+    Returns a tuple: (mapping_dict, header_row_index, triggers)
     """
     excel_data = _get_excel_data(file_input, password)
     # Read first 20 rows to have enough data for inference if needed
@@ -171,42 +172,51 @@ def get_column_mapping(file_input, password=None):
         df_scan = pd.read_excel(excel_data, header=None, nrows=20)
     except Exception as e:
         audit_logger.log_action("ERROR", details={"msg": f"Failed to read file for mapping: {e}"})
-        return {}, 0
-    
+        return {}, 0, set()
+
     num_rows = df_scan.shape[0]
     num_cols = df_scan.shape[1]
-    
+
     best_row_idx = 0
     best_mapping = {}
     max_matches = 0
-    
+    best_triggers = set()
+
     # Milestone 4: Search up to Row 10
     scan_limit = min(num_rows, 10)
     for row_idx in range(scan_limit):
         current_mapping = {}
         matches = 0
-        
+        current_triggers = set()
+
+        if row_idx > 1:
+            current_triggers.add("Deep Search Trigger")
+
         # Merged Cell Unstacking (Protocol 3.3)
         last_match = None
-        
+
         for col_idx in range(num_cols):
             val = df_scan.iloc[row_idx, col_idx]
-            
+
             # If empty, try unstacking from previous column in the same row
             if pd.isna(val) or str(val).strip() == "":
                 if last_match:
                     current_mapping[col_idx] = last_match
+                    current_triggers.add("Structural Repair Trigger (Merged Cells)")
                     continue
-            
-            match = find_master_match(val, use_fuzzy=True)
+
+            match, is_fuzzy = find_master_match(val, use_fuzzy=True)
             if match:
                 current_mapping[col_idx] = match
                 matches += 1
                 last_match = match
-                
+
+                if is_fuzzy:
+                    current_triggers.add("Fuzzy Match Trigger")
+
                 # Log healing if fuzzy
                 original_text = str(val).strip()
-                if original_text.lower() != match.lower() and original_text not in load_aliases().get(match, []):
+                if is_fuzzy:
                      file_label = file_input if isinstance(file_input, str) else "stream"
                      audit_logger.log_action("HEALING_HEADER", details={
                          "file_source": file_label,
@@ -214,17 +224,18 @@ def get_column_mapping(file_input, password=None):
                      })
             else:
                 last_match = None
-        
+
         if matches > max_matches:
             max_matches = matches
             best_mapping = current_mapping
             best_row_idx = row_idx
-            
+            best_triggers = current_triggers
+
         # Check 30% threshold for deep scan rows (as per Sanitization Protocol 3.2)
         if row_idx > 1 and num_cols > 0:
             if (matches / num_cols) >= 0.3:
                 break
-                
+
     # Empty Header Recovery (Protocol 3.2)
     if num_rows > best_row_idx + 1:
         data_area = df_scan.iloc[best_row_idx + 1:]
@@ -233,24 +244,31 @@ def get_column_mapping(file_input, password=None):
                 inferred = infer_heading_from_data(data_area.iloc[:, col_idx])
                 if inferred:
                     best_mapping[col_idx] = inferred
+                    best_triggers.add("Contextual Inference Trigger")
                     file_label = file_input if isinstance(file_input, str) else "stream"
                     audit_logger.log_action("HEALING_HEADER", details={
                         "file_source": file_label,
                         "details": f"Inferred header for column {col_idx} as '{inferred}' based on data pattern"
                     })
 
+    # Structural Repair Trigger (Duplicate Columns) handled in load_and_map_data
+
     # If no matches found in deep scan, try combined Row 1 & 2 logic as fallback
     if max_matches == 0 and num_rows >= 2:
          for col_idx in range(num_cols):
              r1 = df_scan.iloc[0, col_idx]
              r2 = df_scan.iloc[1, col_idx]
-             
-             match = find_master_match(r1) or find_master_match(r2)
+
+             m1, f1 = find_master_match(r1)
+             m2, f2 = find_master_match(r2)
+             match = m1 or m2
              if match:
                  best_mapping[col_idx] = match
+                 if f1 or f2:
+                     best_triggers.add("Fuzzy Match Trigger")
          best_row_idx = 1
-         
-    return best_mapping, best_row_idx
+
+    return best_mapping, best_row_idx, best_triggers
 
 def load_hospital_config():
     """Loads hospital email and validator mapping."""
@@ -287,8 +305,9 @@ def load_and_map_data(file_input, password=None, custom_mapping=None):
     if custom_mapping:
         mapping = custom_mapping
         header_row_idx = 1
+        triggers = set()
     else:
-        mapping, header_row_idx = get_column_mapping(file_input, password)
+        mapping, header_row_idx, triggers = get_column_mapping(file_input, password)
 
     excel_data = _get_excel_data(file_input, password)
     # Read the data
@@ -312,7 +331,8 @@ def load_and_map_data(file_input, password=None, custom_mapping=None):
             for i in range(1, len(series_list)):
                 merged = merged.fillna(series_list[i])
             df_mapped[master_name] = merged
-
+            
+            triggers.add("Structural Repair Trigger (Duplicate Columns)")
             file_label = file_input if isinstance(file_input, str) else "stream"
             audit_logger.log_action("HEALING_HEADER", details={
                 "file_source": file_label,
@@ -332,12 +352,22 @@ def load_and_map_data(file_input, password=None, custom_mapping=None):
     # Apply Sanitization
     df_mapped = sanitize_dataframe(df_mapped)
 
+    # Set default Region if missing or null
+    if 'Region' not in df_mapped.columns:
+        df_mapped['Region'] = 'SERHA'
+    else:
+        df_mapped['Region'] = df_mapped['Region'].fillna('SERHA')
+
     # Set default Validation_Status if missing
     if 'Validation_Status' not in df_mapped.columns or df_mapped['Validation_Status'].isnull().all():
         df_mapped['Validation_Status'] = 'Pending'
 
     # Set Date_Added
     df_mapped['Date_Added'] = pd.Timestamp.now()
+    
+    # Milestone 5: Accuracy Guardrails
+    df_mapped['Review_Required'] = len(triggers) > 0
+    df_mapped['Review_Triggers'] = ", ".join(sorted(list(triggers))) if triggers else ""
 
     # Record new aliases
     excel_data_orig = _get_excel_data(file_input, password)
@@ -349,12 +379,14 @@ def load_and_map_data(file_input, password=None, custom_mapping=None):
                 if original_header and original_header.lower() != master_name.lower():
                     # Check if already an alias
                     if original_header not in load_aliases().get(master_name, []):
-                        save_new_alias(master_name, original_header)
+                        # ONLY save immediately if NO triggers (high confidence)
+                        if not triggers:
+                            save_new_alias(master_name, original_header)
     except Exception:
         pass
 
     file_label = file_input if isinstance(file_input, str) else "file-like-object"
-    audit_logger.log_action("LOAD_AND_MAP", details={"file": file_label, "records": len(df_mapped)})
+    audit_logger.log_action("LOAD_AND_MAP", details={"file": file_label, "records": len(df_mapped), "triggers": list(triggers)})
 
     # Fill Validator_Email and Hospital_Email from config if missing
     config_df = load_hospital_config()

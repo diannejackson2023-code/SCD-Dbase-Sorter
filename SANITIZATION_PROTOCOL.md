@@ -53,9 +53,51 @@ The system prioritizes security over macro preservation.
 
 ---
 
-## 4. Audit & Logging
-Every sanitization and healing action must be logged in the `audit_log.jsonl` with the following attributes:
+## 5. Strict Accuracy Guardrails (Milestone 5)
+To ensure zero tolerance for data errors, all "healed" or "inferred" data must undergo a mandatory human review.
+
+### 5.1 Mandatory Review Flag
+The system must automatically tag records with a `Review_Required` flag (boolean) if any of the following conditions are met during ingestion:
+- **Fuzzy Match Trigger**: A header was mapped using fuzzy matching (Levenshtein distance > 0).
+- **Deep Search Trigger**: Valid headers were only found after scanning beyond Row 2 (Deep Scan).
+- **Contextual Inference Trigger**: A header was inferred from data patterns (Protocol 3.2).
+- **Structural Repair Trigger**: Merged cells were unstacked or duplicate columns were merged (Protocol 3.3).
+
+### 5.2 Lead Verification Queue (Suggested Healing)
+- **Suggested vs. Automatic**: Milestone 5 transitions the system to a "Suggested Healing" model. High-risk automated repairs (fuzzy matching, deep search, contextual inference) are strictly prohibited from merging until a human Lead reviews the suggestion.
+- **Gating**: Records tagged with `Review_Required = True` are diverted to a persistent **Staging Queue** with status `NEEDS_REVIEW` and are **NOT** merged into the Master Database during atomic exports.
+- **Verification UI**: The Lead Dashboard must provide a "Verification Queue" interface showing:
+    - Original "Broken" Header vs. Healed Master Heading.
+    - Data samples from the affected column.
+    - Reason for the Review Flag (e.g., "Fuzzy Match: 'Ptnt ID' -> 'Patient_ID'").
+- **Actions**:
+    - **Approve**: Removes the flag and moves the record to the Master Database.
+    - **Correct**: Allows the Lead to manually re-map the column before merging.
+    - **Reject**: Purges the record from the Staging Queue.
+
+### 5.3 Learning Loop
+- Upon Lead approval, the system must permanently add the approved mapping to `aliases.json` to reduce future flags for the same variation.
+
+---
+
+## 6. Audit & Logging
+Every sanitization, healing, and verification action must be logged in the `audit_log.jsonl` with the following attributes:
 - `timestamp`: ISO-8601
-- `action`: `SANITIZATION_FORMULA`, `SANITIZATION_MACRO`, or `HEALING_HEADER`
+- `action`: `SANITIZATION_FORMULA`, `SANITIZATION_MACRO`, `HEALING_HEADER`, `ACCURACY_GUARDRAIL`, or `LEAD_APPROVAL`
 - `file_source`: Original filename
-- `details`: Specific change made (e.g., "Prepended ' to cell A4", "Stripped VBA macros", "Healed 'Pt ID' to 'Patient_ID'")
+- `details`: Specific change made or trigger detected (e.g., "Healed 'Pt ID' to 'Patient_ID'", "Triggered Fuzzy Match", "Lead approved and merged")
+
+---
+
+## 7. International Data Privacy Compliance (Global Scaling)
+To support regional multi-tenancy (Caribbean, North/South America, Africa) and ensure compliance with international standards (HIPAA, GDPR, Jamaica Data Protection Act), the following data handling rules apply:
+
+### 7.1 PII Masking (Dashboard Display)
+Sensitive data (Patient_Name) must be masked by default in the dashboard to prevent unauthorized exposure.
+- **Rule**: Replace internal characters with asterisks (e.g., "John Doe" -> "J**n D*e").
+- **Exemption**: Only authorized clinical staff with explicit "View PII" permissions (Master Password authorized) may view unmasked names.
+
+### 7.2 Data Residency & Multi-Tenancy
+- **Regional Tags**: Every record must carry a mandatory `Region` tag.
+- **Access Control**: Future iterations will implement Regional Profile filters, ensuring data from one region is not accessible by administrators of another unless explicitly shared.
+- **Encryption**: All data at rest is encrypted with AES-256 using the `processor/encryption.py` module.
