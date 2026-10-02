@@ -113,7 +113,7 @@ def check_system_health():
 # Load password hashes from environment variables with hardcoded fallbacks
 MASTER_DB_PASSWORD_HASH = os.environ.get(
     "ADMIN_PASSWORD_HASH", 
-    "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918" # sha256("admin")
+    "d911eec74ed489edd0ffb7e28c444ee948a336eea86f0cf79e394ec4d2839840" # sha256("Protect#1$")
 )
 NATIONAL_VIEWER_PASSWORD_HASH = os.environ.get(
     "VIEWER_PASSWORD_HASH", 
