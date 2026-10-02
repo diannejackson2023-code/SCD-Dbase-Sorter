@@ -22,8 +22,14 @@ To go live on Streamlit Community Cloud, the owner must provide the following cr
 1.  **SMTP Credentials**: For email notifications and validation requests.
 2.  **Twilio API SID/Token**: For the SMS OTP identity verification system.
 3.  **PayPal Client ID**: For license billing (if applicable).
-4.  **Master Database Password**: Default is "admin". (Admin Role)
-5.  **National Viewer Password**: Default is "national-view-2026". (View-Only Role)
+4.  **Admin Password Hash (`ADMIN_PASSWORD_HASH`)**: SHA-256 hash of the portal admin password. Default is the hash of "admin".
+5.  **National Viewer Password Hash (`VIEWER_PASSWORD_HASH`)**: SHA-256 hash of the view-only password. Default is the hash of "national-view-2026".
+
+### Portal Password Rotation
+The system uses SHA-256 hashes stored in environment variables for portal access. To rotate these:
+1. Generate a new SHA-256 hash for your desired password (e.g., using an online tool or `hashlib` in Python).
+2. Update the `ADMIN_PASSWORD_HASH` or `VIEWER_PASSWORD_HASH` secret in the Streamlit Cloud dashboard.
+3. Restart the Streamlit app to apply changes.
 
 ## 4. Role-Based Access Control
 The system now supports two distinct access levels:

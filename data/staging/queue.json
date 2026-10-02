@@ -1,10 +1,25 @@
 {
-    "test_token_123": [
+    "stress-test-token": [
         {
-            "filename": "test_discovery.xlsx",
+            "filename": "data_serha.xlsx",
             "status": "MERGED",
-            "updated_at": "2026-07-19T20:11:50.639599",
-            "details": "No new records found (all duplicates)"
+            "size": "5.2 KB",
+            "updated_at": "2026-07-23T04:13:47.867218",
+            "details": "Merged 10 new records"
+        },
+        {
+            "filename": "data_west_africa.xlsx",
+            "status": "MERGED",
+            "size": "5.2 KB",
+            "updated_at": "2026-07-23T04:13:48.213372",
+            "details": "Lead approved and merged"
+        },
+        {
+            "filename": "data_uk.xlsx",
+            "status": "MERGED",
+            "size": "5.3 KB",
+            "updated_at": "2026-07-23T04:13:48.426990",
+            "details": "Lead approved and merged"
         }
     ]
 }

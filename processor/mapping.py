@@ -11,7 +11,7 @@ from logger import audit_logger
 
 # Standard Master Headings
 MASTER_HEADINGS = [
-    "Patient_ID", "Patient_Name", "Hospital", "Region", "Year", "Validation_Status", 
+    "Patient_ID", "Patient_Name", "Hospital", "Region", "Year", "DOB", "Validation_Status", 
     "Validator_Email", "Hospital_Email", "Date_Added", "Treatment", "Outcome"
 ]
 
@@ -20,7 +20,8 @@ PATTERNS = {
     "Patient_ID": r"^[A-Z0-9]{4,12}$",
     "Validator_Email": r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$",
     "Hospital_Email": r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$",
-    "Year": r"^(19|20)\d{2}$"
+    "Year": r"^(19|20)\d{2}$",
+    "DOB": r"^\d{4}-\d{2}-\d{2}$|^\d{1,2}/\d{1,2}/\d{2,4}$"
 }
 
 def infer_heading_from_data(data_sample):
@@ -54,6 +55,7 @@ def load_aliases():
     return {
         "Hospital": ["Hosp_Name", "Hosp Name", "Facility", "Center", "Hospital Name"],
         "Year": ["Yr", "Data_Year", "Period", "Year of Data"],
+        "DOB": ["Date of Birth", "Birth Date", "DOB", "Birth_Date", "Birthday"],
         "Patient_ID": ["Pt_No", "Patient ID", "ID", "Case_No", "Patient_ID"],
         "Patient_Name": ["Name", "Patient Name", "Full Name", "Pt Name"],
         "Region": ["Zone", "Area", "County", "District", "Province", "Regional"],
@@ -365,6 +367,24 @@ def load_and_map_data(file_input, password=None, custom_mapping=None):
     # Set Date_Added
     df_mapped['Date_Added'] = pd.Timestamp.now()
     
+    # Milestone 5 & Owner Requirement: DOB Validation
+    if 'DOB' in df_mapped.columns:
+        # Attempt to parse DOB
+        original_dob = df_mapped['DOB'].copy()
+        df_mapped['DOB'] = pd.to_datetime(df_mapped['DOB'], errors='coerce')
+        
+        # If any records had data but failed to parse, trigger review
+        failed_parse = original_dob.notna() & df_mapped['DOB'].isna()
+        if failed_parse.any():
+            triggers.add("Unparseable DOB Trigger")
+            audit_logger.log_action("HEALING_FAILED", details={"reason": "Unparseable DOB", "records": int(failed_parse.sum())})
+            
+        # If DOB is missing entirely for some records
+        if df_mapped['DOB'].isna().any():
+            triggers.add("Missing DOB Trigger")
+    else:
+        triggers.add("Missing DOB Trigger")
+
     # Milestone 5: Accuracy Guardrails
     df_mapped['Review_Required'] = len(triggers) > 0
     df_mapped['Review_Triggers'] = ", ".join(sorted(list(triggers))) if triggers else ""

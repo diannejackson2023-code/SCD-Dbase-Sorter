@@ -29,7 +29,13 @@ def update_master_database(new_data_df):
         try:
             # Decrypt in memory
             decrypted_data = decrypt_file_to_memory(MASTER_DB_PATH)
-            master_df = pd.read_excel(io.BytesIO(decrypted_data))
+            
+            # Read only the Master_Data sheet as source of truth
+            try:
+                master_df = pd.read_excel(io.BytesIO(decrypted_data), sheet_name='Master_Data')
+            except Exception:
+                # Fallback: try reading first sheet
+                master_df = pd.read_excel(io.BytesIO(decrypted_data), sheet_name=0)
             
             # Ensure Date_Added is datetime
             if 'Date_Added' in master_df.columns:
@@ -49,62 +55,88 @@ def update_master_database(new_data_df):
     else:
         combined_df = new_data_df
 
-    # Save and Encrypt
-    combined_df.to_excel(MASTER_DB_PATH, sheet_name='Master_Data', index=False)
-    encrypt_file(MASTER_DB_PATH)
-    
-    audit_logger.log_action("UPDATE_MASTER", details={"records_added": len(new_data_df)})
+    # We don't save here anymore, we let process_new_data call the refined generator
     return combined_df
 
 def generate_hospital_sheets(master_df):
     """
-    Splits the master dataframe into individual hospital Excel files
-    AND adds them as sheets in the Master_Database.xlsx.
-    Sorts each by Year.
+    Owner Requirement: Master Database organized by year-of-birth tabs.
+    Splits the master dataframe into:
+    1. Individual hospital Excel files in Hospitals/ directory.
+    2. DOB Year tabs in Master_Database.xlsx.
+    3. Hospital tabs in Master_Database.xlsx (for reporting).
     """
     ensure_directories()
     
     if master_df.empty:
         return
 
-    # Group by Hospital
-    grouped = master_df.groupby('Hospital')
-    
-    # Simplified approach: Overwrite everything since we have the full master_df
+    # 1. Generate individual hospital files
+    hospital_groups = master_df.groupby('Hospital')
+    for hospital, group in hospital_groups:
+        if pd.isna(hospital) or str(hospital).strip() == "":
+            hospital_name = "Unassigned"
+        else:
+            hospital_name = str(hospital).strip()
+            
+        safe_name = "".join([c for c in hospital_name if c.isalnum() or c in (' ', '_')]).strip()
+        safe_filename = safe_name.replace(' ', '_')
+        
+        # Sort by Year (collection year) and Date_Added
+        if 'Year' in group.columns:
+            group_sorted = group.assign(Year_Numeric=pd.to_numeric(group['Year'], errors='coerce'))
+            group_sorted = group_sorted.sort_values(by=['Year_Numeric', 'Date_Added'], ascending=[False, False])
+            group_to_save = group_sorted.drop(columns=['Year_Numeric'])
+        else:
+            group_to_save = group.sort_values(by='Date_Added', ascending=False)
+            
+        file_path = os.path.join(HOSPITALS_DIR, f"{safe_filename}.xlsx")
+        group_to_save.to_excel(file_path, index=False)
+        encrypt_file(file_path)
+
+    # 2. Update Master_Database.xlsx with Year-of-Birth tabs and Hospital tabs
     with pd.ExcelWriter(MASTER_DB_PATH, engine='openpyxl') as writer:
-        # Also write the full Master sheet
+        # A. Master Data Tab (Source of Truth)
         master_df.to_excel(writer, sheet_name='Master_Data', index=False)
         
-        for hospital, group in grouped:
-            if pd.isna(hospital) or str(hospital).strip() == "":
-                hospital_name = "Unassigned"
-            else:
-                hospital_name = str(hospital).strip()
+        # B. DOB Year Tabs (OWNER REQUIREMENT)
+        if 'DOB' in master_df.columns:
+            # Extract year from DOB
+            master_df_with_dob_year = master_df.copy()
+            # Ensure DOB is datetime
+            master_df_with_dob_year['DOB'] = pd.to_datetime(master_df_with_dob_year['DOB'], errors='coerce')
+            master_df_with_dob_year['DOB_Year'] = master_df_with_dob_year['DOB'].dt.year
+            
+            # Filter out records with no DOB year
+            valid_dob_df = master_df_with_dob_year.dropna(subset=['DOB_Year'])
+            if not valid_dob_df.empty:
+                valid_dob_df = valid_dob_df.assign(DOB_Year=valid_dob_df['DOB_Year'].astype(int))
+                year_groups = valid_dob_df.groupby('DOB_Year')
                 
-            # Create a safe filename and sheet name
-            safe_name = "".join([c for c in hospital_name if c.isalnum() or c in (' ', '_')]).strip()
-            safe_filename = safe_name.replace(' ', '_')
+                # Sort years ascending (oldest to newest)
+                sorted_years = sorted(year_groups.groups.keys())
+                for year in sorted_years:
+                    year_group = year_groups.get_group(year).drop(columns=['DOB_Year'])
+                    writer.book.create_sheet(str(year))
+                    year_group.to_excel(writer, sheet_name=str(year), index=False)
             
-            # Sort by Year
-            if 'Year' in group.columns:
-                group['Year_Numeric'] = pd.to_numeric(group['Year'], errors='coerce')
-                group = group.sort_values(by=['Year_Numeric', 'Date_Added'], ascending=[False, False])
-                group = group.drop(columns=['Year_Numeric'])
+            # Ambiguous/Missing DOB records go to a specific tab
+            missing_dob_df = master_df_with_dob_year[master_df_with_dob_year['DOB_Year'].isna()].drop(columns=['DOB_Year'])
+            if not missing_dob_df.empty:
+                missing_dob_df.to_excel(writer, sheet_name='Missing_DOB', index=False)
+
+        # C. Hospital Tabs (Reporting)
+        for hospital, group in hospital_groups:
+            if pd.isna(hospital) or str(hospital).strip() == "":
+                sheet_name = "Unassigned"
+            else:
+                sheet_name = "".join([c for c in str(hospital) if c.isalnum() or c in (' ', '_')])[:31].strip()
             
-            # 1. Save to individual file
-            file_path = os.path.join(HOSPITALS_DIR, f"{safe_filename}.xlsx")
-            group.to_excel(file_path, index=False)
-            encrypt_file(file_path)
-            
-            # 2. Save to a sheet in Master_Database
-            sheet_name = safe_name[:31]
             group.to_excel(writer, sheet_name=sheet_name, index=False)
             
-            print(f"Generated/Updated sheet and file for {hospital_name}")
-    
     # Finally encrypt the Master Database
     encrypt_file(MASTER_DB_PATH)
-    audit_logger.log_action("GENERATE_HOSPITAL_SHEETS", details={"hospitals": list(grouped.groups.keys())})
+    audit_logger.log_action("GENERATE_MASTER_TABS", details={"hospitals": len(hospital_groups)})
 
 def update_queue_status_local(token, filename, status, details=None):
     """Local helper to update queue without full Flask dependency."""

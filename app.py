@@ -110,9 +110,15 @@ def check_system_health():
 # ──────────────────────────────────────────────
 # Authorization & Security
 # ──────────────────────────────────────────────
-# Master DB Password Store (simple hashed passwords for authorization)
-MASTER_DB_PASSWORD_HASH = "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918"  # sha256("admin")
-NATIONAL_VIEWER_PASSWORD_HASH = "b176c94eb4cd6f378b6757f1c971b643469dd80f98eca1a278273ccf57ce4c31" # sha256("national-view-2026")
+# Load password hashes from environment variables with hardcoded fallbacks
+MASTER_DB_PASSWORD_HASH = os.environ.get(
+    "ADMIN_PASSWORD_HASH", 
+    "8c6976e5b5410415bde908bd4dee15dfb167a9c873fc4bb8a81f6f2ab448a918" # sha256("admin")
+)
+NATIONAL_VIEWER_PASSWORD_HASH = os.environ.get(
+    "VIEWER_PASSWORD_HASH", 
+    "b176c94eb4cd6f378b6757f1c971b643469dd80f98eca1a278273ccf57ce4c31" # sha256("national-view-2026")
+)
 
 import hashlib
 

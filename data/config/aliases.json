@@ -19,13 +19,21 @@
         "ID",
         "Case_No",
         "Patient_ID",
-        "Pt Num"
+        "Patiient ID"
     ],
     "Patient_Name": [
         "Name",
         "Patient Name",
         "Full Name",
         "Pt Name"
+    ],
+    "Region": [
+        "Zone",
+        "Area",
+        "County",
+        "District",
+        "Province",
+        "Regional"
     ],
     "Treatment": [
         "Rx",
