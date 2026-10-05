@@ -18,6 +18,9 @@ As requested, "Automatic Healing" has been replaced with **Suggested Healing**.
 - **Learning Loop**: The system only "learns" new aliases after they have been explicitly verified by the Lead.
 
 ## 3. Operational Setup (Action Required)
+> **CRITICAL: DEPLOYMENT BLOCKED**
+> The automated setup has encountered a timeout waiting for owner input on credentials. To unblock the global launch, the owner must manually configure the secrets in the Streamlit Cloud dashboard.
+
 To go live on Streamlit Community Cloud, the owner must provide the following credentials:
 1.  **SMTP Credentials**: For email notifications and validation requests.
 2.  **Twilio API SID/Token**: For the SMS OTP identity verification system.
