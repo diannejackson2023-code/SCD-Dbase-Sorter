@@ -18,11 +18,14 @@ As requested, "Automatic Healing" has been replaced with **Suggested Healing**.
 - **Learning Loop**: The system only "learns" new aliases after they have been explicitly verified by the Lead.
 
 ## 3. Operational Setup (Action Required)
+> **CRITICAL: DEPLOYMENT BLOCKED**
+> The automated setup has encountered a timeout waiting for owner input on credentials. To unblock the global launch, the owner must manually configure the secrets in the Streamlit Cloud dashboard.
+
 To go live on Streamlit Community Cloud, the owner must provide the following credentials:
 1.  **SMTP Credentials**: For email notifications and validation requests.
 2.  **Twilio API SID/Token**: For the SMS OTP identity verification system.
 3.  **PayPal Client ID**: For license billing (if applicable).
-4.  **Admin Password Hash (`ADMIN_PASSWORD_HASH`)**: SHA-256 hash of the portal admin password. Default is the hash of "admin".
+4.  **Admin Password Hash (`ADMIN_PASSWORD_HASH`)**: SHA-256 hash of the portal admin password. Default is the hash of "Protect#1$".
 5.  **National Viewer Password Hash (`VIEWER_PASSWORD_HASH`)**: SHA-256 hash of the view-only password. Default is the hash of "national-view-2026".
 
 ### Portal Password Rotation
