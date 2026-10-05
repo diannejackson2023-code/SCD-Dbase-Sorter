@@ -25,3 +25,9 @@ companion/build/
 companion/*.spec
 companion/staged_*
 companion/sanitized_*
+
+# Runtime Data & PII
+data/hospitals/*.xlsx
+data/logs/*.jsonl
+data/master/*.xlsx
+data/staging/*.json
